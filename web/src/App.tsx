@@ -536,13 +536,10 @@ const copy = {
     dashboard: "总览",
     providers: "上游提供商",
     consumers: "下游消费者",
-    "codex-integration": "ChatGPT（CodeX）",
+    "codex-integration": "Codex",
     "dsh-integration": "DSH（DeepSeek Harness）",
     "opencode-integration": "OpenCode",
     "direct-api-integration": "直接 API",
-    transcriptions: "语音转文字",
-    realtime: "实时语音",
-    images: "图片生成",
     usage: "用量",
     audit: "推理审计",
     topups: "充值",
@@ -550,58 +547,42 @@ const copy = {
     "system-resources": "系统资源",
     "admin-audit": "管理审计",
     "provider-audit": "提供商审计",
-    "model-downgrade-audit": "模型降级审计",
     users: "用户",
     settings: "设置",
-    signout: "退出登录",
     title: "DeepSeek-LB",
-    subtitle: "CodeX OAuth 负载均衡器",
-    console: "控制台",
+    subtitle: "DeepSeek API 反向代理与负载均衡器",
     navigationWorkspace: "工作区",
     navigationIntegrations: "下游接入",
-    navigationTools: "工具",
     navigationData: "数据",
     navigationAdministration: "管理员",
     english: "English",
     roleLoading: "加载中",
-    loginDescription: "使用 Auth Mini 登录运维控制台",
-    email: "邮箱",
-    authRedirectTitle: "在 Auth Mini 完成身份验证",
-    authRedirectHelp:
-      "邮箱验证码、Passkey 和 ED25519 登录均在 Auth Mini 页面完成；成功后会自动返回 DeepSeek-LB。",
     continueAuthMini: "前往 Auth Mini 登录",
     loading: "正在加载 DeepSeek-LB…",
     pageDashboard: "查看当前账户的 24 小时运行摘要。",
-    pageProviders: "管理自己拥有的 CodeX OAuth Provider、运行状态与用户授权。",
+    pageProviders:
+      "管理自己拥有的 DeepSeek 上游提供商、运行状态与近 7 天用量。",
     pageConsumers: "按 AI App 隔离下游消费者，分别跟踪调用量并独立吊销凭据。",
     pageCodexIntegration:
-      "手动或授权浏览器配置本机 ChatGPT（CodeX）文件，并使用独立的下游 Consumer。",
+      "手动或授权浏览器配置本机 Codex 文件，并使用独立的下游 Consumer。",
     pageDshIntegration:
       "手动或授权浏览器自动配置本机 DSH，并为它创建独立的下游 Consumer。",
     pageOpenCodeIntegration:
       "手动或授权浏览器配置本机 OpenCode 文件，并使用独立的下游 Consumer。",
     pageDirectApiIntegration:
-      "使用独立的下游 Consumer 直接调用 DeepSeek-LB 的 OpenAI 兼容 API。",
-    pageTranscriptions:
-      "录制或上传音频，使用当前用户可访问的 CodeX OAuth Provider 转写为文字。",
-    pageRealtime:
-      "通过 WebRTC 直接与实时语音模型对话；连接和控制信令由 DeepSeek-LB 安全代理到 OpenAI Realtime API。",
-    pageImages:
-      "通过文字提示和可选参考图片生成图像，使用当前用户可访问的 CodeX OAuth Provider。",
+      "使用独立的下游 Consumer 经 DeepSeek-LB 调用 DeepSeek API。",
     pageUsage: "按消费者核算请求、Token、官方费用与实际费用。",
     pageAudit:
       "逐次追踪推理请求、上游提供商、费用快照与累计消费；诊断内容按配置期限保留。",
     pageTopups: "通过 Midas 管理入金、协议授权与可用额度。",
     pageModelPrices:
-      "查看 OpenAI 官方标准 Token 价格快照，价格按每百万 Token 展示。",
+      "查看 DeepSeek 官方标准 Token 价格快照，价格按每百万 Token 展示。",
     pageSystemResources:
       "查看宿主机当前负载和 DeepSeek-LB 数据占用；仅 root 和管理员可访问。",
     pageAdminAudit: "查看 root 与管理员执行的管理操作记录。",
     pageProviderAudit:
       "按上游提供商、模型和小时查看最近 7 天请求成功与失败情况。",
-    pageModelDowngradeAudit:
-      "对比下游请求模型与上游实际返回的模型，定位被上游静默替换、降级交付的调用。",
-    pageRequestDetail: "查看调用上下文、消息结构与同一 Session ID 的相邻请求。",
+    pageRequestDetail: "查看调用上下文、消息结构与同一 Thread ID 的相邻请求。",
     pageUsers:
       "由 root 管理本地角色与全局 Provider 权限；用户身份仍由 Auth Mini 提供。",
     pageSettings: "确认身份边界、上游与部署限制。",
@@ -622,8 +603,6 @@ const copy = {
     providedValue: "累计提供价值 (USD)",
     officialCost: "官方费用 (USD)",
     actualCost: "实际费用 (USD)",
-    officialProvidedValue: "官方累计提供价值 (USD)",
-    actualProvidedValue: "实际累计提供价值 (USD)",
     priceMultiplier: "价格倍率",
     officialConsumedUsdBefore: "官方累计费用前 (USD)",
     officialConsumedUsdAfter: "官方累计费用后 (USD)",
@@ -644,17 +623,21 @@ const copy = {
     requestNotEnforced: "当前不因可用额度不足拦截请求。",
     requestEnforced: "可用额度不足时会拦截请求。",
     midasFundTitle: "转入 DeepSeek-LB 公共账户",
-    midasFundDescription: "输入金额后，Midas 会在新窗口中显示不可编辑的收款账户和金额；登录并确认后，即可完成充值。",
+    midasFundDescription:
+      "输入金额后，Midas 会在新窗口中显示不可编辑的收款账户和金额；登录并确认后，即可完成充值。",
     topupAmount: "充值金额 (USD)",
     topupAmountHint: "最多 9 位小数。Midas 将按精确 USD 纳美元金额转账。",
     continueToMidas: "继续前往 Midas",
     publicWalletUserId: "DeepSeek-LB 公共账户用户 ID",
     copyMidasUserId: "复制用户 ID",
-    midasTransferRefresh: "完成转账后刷新本页，累计充值会从 Midas 当前累计转入中显示。",
+    midasTransferRefresh:
+      "完成转账后刷新本页，累计充值会从 Midas 当前累计转入中显示。",
     midasUnavailable: "Midas 尚未配置",
-    midasUnavailableDescription: "请由 root 在设置中填写 Midas 公共账户用户 ID 与 fund API key。",
+    midasUnavailableDescription:
+      "请由 root 在设置中填写 Midas 公共账户用户 ID 与 fund API key。",
     midasSettings: "Midas",
-    midasSettingsDescription: "Midas 是充值唯一账本。公共账户 user ID 可安全展示给付款用户；fund API key 仅保存在服务器 SQLite 中，留空会保留现有密钥。",
+    midasSettingsDescription:
+      "Midas 是充值唯一账本。公共账户 user ID 可安全展示给付款用户；fund API key 仅保存在服务器 SQLite 中，留空会保留现有密钥。",
     midasApiBase: "API 地址",
     midasFundUserId: "公共账户 User ID",
     midasFundApiKey: "Fund API key",
@@ -670,9 +653,6 @@ const copy = {
     officialModelPriceTable: "Token 价格",
     modelPricesTableDescription:
       "按高峰（peak）与非高峰（off-peak）分别列示。非高峰为高峰价格的 50%，中国法定节假日全天按非高峰计费。",
-    shortContext: "短上下文",
-    longContext: "长上下文",
-    cacheWrite: "缓存写入",
     activeProviders: "可用上游提供商",
     peakCalls24h: "峰时请求（24 小时）",
     pricingTariffTitle: "当前计费时段",
@@ -699,7 +679,7 @@ const copy = {
     load1m: "1 分钟负载",
     logicalCpus: "逻辑核心",
     available: "可用",
-    openaiLbRss: "DeepSeek-LB RSS",
+    lbRss: "DeepSeek-LB RSS",
     otherSystemMemory: "其他系统占用",
     systemAvailableMemory: "系统可用内存",
     swap: "Swap",
@@ -759,61 +739,17 @@ const copy = {
     addProvider: "添加上游提供商",
     noProviders: "尚无上游提供商",
     noProvidersDescription:
-      "从浏览器重新登录 OpenAI OAuth，或导入已有的 Access Key 与 Refresh Key。",
+      "点击“添加上游提供商”，填入 DeepSeek 平台签发的 API Key，即可加入调度池。",
     name: "名称",
-    account: "账户",
     owner: "所有者",
     status: "状态",
-    circuitBreaker: "熔断",
-    circuitOpen: "已熔断",
-    circuitRecovered: "已恢复",
-    circuitNeverOpened: "无熔断记录",
-    circuitUntil: "熔断至",
-    circuitOpenedAt: "触发时间",
-    circuitClosedAt: "恢复时间",
-    circuitReason: "触发原因",
-    circuitResolution: "结束方式",
-    circuitRateLimitHeaders: "限流响应头",
-    circuitHistory: "熔断记录",
-    circuitHistoryTitle: "上游熔断记录",
-    circuitHistoryDescription:
-      "429 触发、熔断截止时间和恢复结果均持久化在 SQLite。",
     actions: "操作",
     refresh: "刷新",
     providerUpdated: "上游提供商已更新",
     providerAdded: "上游提供商已添加",
-    oauthProviderAdded: "OAuth 上游提供商已添加",
-    addProviderTitle: "添加 CodeX OAuth 上游提供商",
-    addProviderDescription:
-      "选择完成添加所需的方式。Token 将以明文保存在 SQLite，仅 root 与管理员可再次读取和编辑。",
-    addProviderOAuth: "从浏览器重新登录 OpenAI OAuth",
-    addProviderOAuthDescription:
-      "在浏览器中完成 OpenAI 登录后，粘贴完整 callback URL 以完成添加。",
-    addProviderCredentials: "已有 Access Key 和 Refresh Key",
-    addProviderCredentialsDescription:
-      "直接导入已知凭据；适用于已从其他位置安全取得 Token 的情况。",
-    addProviderOAuthTitle: "重新登录 OpenAI OAuth",
-    addProviderOAuthInProgressDescription:
-      "在新标签页中完成 OpenAI 登录，然后将浏览器地址栏中的完整 callback URL 粘贴到这里。认证进行中只能使用取消按钮退出。",
-    addProviderCredentialsTitle: "导入 OpenAI OAuth 凭据",
-    addProviderCredentialsTitleDescription:
-      "填写已知的 Access Key 与 Refresh Key。",
+    addProviderTitle: "添加上游提供商",
     nameOptional: "名称（可选）",
-    providerNameHelp: "留空时会使用上游渠道 UUID。",
-    providerOriginator: "客户端身份（originator）",
-    providerOriginatorCodex: "CodeX CLI（codex_cli_rs）",
-    providerOriginatorPi: "Pi Agent（pi）",
-    allowOtherOriginator: "允许为其他 originator 兜底",
-    allowOtherOriginatorHelp: "仅当请求没有可用的同身份提供商时，承接其他或未知来源的请求。发往上游的身份仍使用此提供商的 originator。",
-    originatorFallback: "跨来源兜底",
-    downstreamOriginator: "下游 originator",
-    upstreamOriginator: "上游 originator",
-    originatorFallbackReason: "跨来源兜底原因",
-    providerOriginatorOpencode: "OpenCode（opencode）",
-    providerOriginatorHelp:
-      "该身份在 OAuth 授权与每次上游请求中声明，优先服务相同身份的下游客户端。创建后不可修改；可单独开启跨来源兜底。",
-    providerOriginatorLockedHelp:
-      "本次授权已按此身份发起；如需更换，请重新发起 OAuth。",
+    providerNameHelp: "留空时使用提供商 UUID。",
     providerVisibility: "可见性",
     providerVisibilityPrivate: "私有",
     providerVisibilityPublic: "公开",
@@ -821,91 +757,17 @@ const copy = {
       "私有：只有本用户名下的 Consumer 可以使用该上游提供商。公开：所有 Consumer 都可以使用。",
     makeProviderPublic: "改为公开",
     makeProviderPrivate: "改为私有",
-    accessClaimHelp: "必须是包含 CodeX account_id claim 的 JWT。",
-    callbackUrl: "Callback URL",
-    callbackUrlHelp: "粘贴完整 URL，系统会自动解析 code 与 state。",
-    oauthStateHelp: "OAuth state 已在服务器中一次性保存，有效期 10 分钟。",
-    startOauth: "打开 OpenAI 登录",
-    completeOauth: "完成添加",
-    importCredentials: "导入凭据",
-    editProvider: "编辑凭据",
     editProviderName: "编辑提供商名称",
     saveProviderName: "保存提供商名称",
     cancelProviderName: "取消编辑提供商名称",
-    tokenTitle: "编辑上游提供商凭据",
-    tokenDescription:
-      "读取并更新 SQLite 中明文存储的上游 OAuth Token。名称请直接在名称列中编辑。",
-    loadingTokens: "正在读取 Token…",
-    saveTokens: "保存",
-    tokensSaved: "上游提供商已保存",
     deleteProvider: "删除",
-    deleteProviderTitle: "删除 OAuth 上游提供商？",
+    deleteProviderTitle: "删除上游提供商？",
     deleteProviderDescription:
-      "此操作会将上游提供商从管理列表和调度池中隐藏。其 Token、亲和性及历史记录都会保留。",
+      "此操作会将上游提供商从管理列表和调度池中隐藏。其 API Key、亲和性及历史记录都会保留。",
     confirmDeleteProvider: "隐藏上游提供商",
     providerDeleted: "上游提供商已隐藏",
     testProvider: "测试",
-    testingProvider: "正在获取上游提供商 Usage…",
-    testTitle: "上游提供商 Usage 测试",
-    testDescription:
-      "服务端使用该上游提供商 OAuth Token 调用 Usage API，Token 不会随测试结果返回浏览器。",
-    testSucceeded: "上游提供商测试成功",
-    httpProxy: "HTTP 代理",
-    upstreamProxy: "上游代理",
-    proxyConfigured: "已配置",
-    proxyNotConfigured: "未配置",
-    proxyConfigTitle: "上游代理",
-    proxyConfigDescription:
-      "此代理只用于当前上游提供商。已保存的地址和认证信息不会回显到浏览器。",
-    proxyUrl: "代理地址",
-    proxyUrlHelp: "仅支持 http://，例如 http://username:password@host:port。",
-    saveProxy: "保存代理",
-    removeProxy: "移除代理",
-    proxyDiagnostics: "连接诊断",
-    proxyDiagnosticsTitle: "上游代理诊断",
-    proxyDiagnosticsDescription:
-      "检测由 LB 发起。代理凭据不会返回浏览器。",
-    testingProxy: "正在检测代理链路…",
-    testAgain: "重新检测",
-    proxyExitLocation: "出口位置",
-    proxyNetworkQuality: "链路质量",
-    lbToProxy: "LB → 代理",
-    lbViaProxyToOpenAi: "LB 经代理 → OpenAI",
-    proxyLatencyHelp: "显示收到响应为止的耗时，不代表单向网络时延。",
-    proxyLocationUnavailable: "未能获得出口位置",
-    proxyNotConfiguredDescription: "请先配置 HTTP 代理后再进行诊断。",
-    usageEmail: "邮箱",
-    usagePlan: "套餐",
-    quotaRemaining: "剩余额度",
-    resetsIn: "重置倒计时",
-    quotaUnavailable: "未返回额度",
-    credits: "Credits",
-    rawUsage: "Usage 原始字段",
-    usageUnavailable: "Usage API 未返回可识别的额度字段，请查看原始字段。",
-    rateLimitResetsAvailable: "可用重置",
-    viewRateLimitResets: "重置机会",
-    rateLimitResetsTitle: "限额重置机会",
-    rateLimitResetsDescription:
-      "每次兑换会消耗一项已获得的额度，并只能重置当前符合条件的 ChatGPT / Codex 限额窗口。",
-    rateLimitResetGrantedAt: "获得时间",
-    rateLimitResetExpiresAt: "失效时间",
-    rateLimitResetNextExpiresAt: "重置机会倒计时",
-    rateLimitResetExpiresIn: "剩余",
-    rateLimitResetNoExpiry: "未提供到期时间",
-    rateLimitResetExpired: "已过期",
-    rateLimitResetUnknownCredit:
-      "服务端未提供逐项详情；确认后将使用下一项可用机会。",
-    rateLimitResetUse: "使用此机会",
-    rateLimitResetUseNext: "使用下一项机会",
-    rateLimitResetConfirmTitle: "使用限额重置机会？",
-    rateLimitResetConfirmDescription:
-      "此操作将为当前 Provider 消耗一项已获得的重置额度。额度不可恢复。",
-    confirmRateLimitReset: "确认重置",
-    rateLimitResetting: "正在重置…",
-    rateLimitResetSuccess: "限额已重置，当前状态已刷新。",
-    rateLimitResetAlreadyRedeemed: "本次重置已完成，当前状态已刷新。",
-    rateLimitResetNothingToReset: "当前没有符合条件的限额窗口可重置。",
-    rateLimitResetNoCredit: "账户没有可用的重置机会。",
+    testingProvider: "正在测试上游连通性…",
     consumersTitle: "租户消费者",
     consumersDescription:
       "每个 AI App 建议使用一个独立消费者；这样用量、错误和密钥轮换都能按 App 隔离。消费者凭据只在创建或轮换后显示一次。",
@@ -921,10 +783,6 @@ const copy = {
     requestArchiveHelp:
       "打开后，该 Consumer 的请求/响应诊断预览才会保存到 SQLite。",
     requestArchiveUpdated: "诊断入库开关已更新",
-    interceptDegradation: "降级拦截",
-    interceptDegradationHelp:
-      "打开后，上游返回 x-codex-turn-state=312 的成功响应（可能发生模型降级）会被取消，并以 503 错误码返回。",
-    interceptDegradationUpdated: "降级拦截开关已更新",
     consumerEnabled: "消费者已启用",
     consumerDisabledUpdated: "消费者状态已更新",
     rotateConsumer: "轮换并复制",
@@ -960,7 +818,6 @@ const copy = {
     noUsageDescription: "在所选时间段发起 API 调用后，这里会按维度汇总 Token。",
     requests: "请求",
     errors: "错误",
-    averageLatency: "平均延迟",
     last24Hours: "最近 24 小时",
     last7Days: "最近 7 天",
     allUsers: "全部用户",
@@ -968,20 +825,6 @@ const copy = {
     allModels: "全部模型",
     userLabel: "用户",
     model: "模型",
-    downstreamModel: "下游模型",
-    upstreamModel: "上游模型",
-    downstreamUserAgent: "下游 UA",
-    modelDowngraded: "模型降级",
-    modelMismatchHint: "上游返回模型与下游请求模型不一致。",
-    upstreamUserAgent: "上游 UA",
-    upstreamUserAgentHint:
-      "按 originator 分别覆盖发往上游的 User-Agent，保存后立即生效。留空保持原有行为；下游 UA 仍记录请求原值。",
-    experimentalTurnState312Filter: "实验性拦截 312 Turn State",
-    experimentalTurnState312FilterHint:
-      "打开后，长度恰为 312 的 x-codex-turn-state 请求头不会转发给上游；默认关闭。",
-    upstreamUserAgentCodex: "codex_cli_rs UA",
-    upstreamUserAgentPi: "pi UA",
-    upstreamUserAgentOpencode: "opencode UA",
     consumerLabel: "消费者",
     date: "日期",
     rows: "行",
@@ -991,36 +834,27 @@ const copy = {
     inputTokens: "输入 Token",
     cachedInputTokens: "缓存输入 Token",
     outputTokens: "输出 Token",
-    cost: "费用 (USD)",
     requestCount: "请求次数",
     usageRows: "条聚合记录",
     sortColumn: "排序",
     total: "总计",
     clearFilters: "清除筛选",
     pivotFields: "透视字段",
-    groupOrder: "分组顺序",
     dataOrder: "数据列顺序",
-    sum: "求和",
     auditTitle: "推理审计",
     auditDescription:
-      "请求/响应诊断预览保存在 SQLite；不记录 Authorization 或 OAuth 凭据。",
+      "请求/响应诊断预览保存在 SQLite；不记录 Authorization 或上游 API Key。",
     noAudit: "暂无推理审计记录",
     noAuditDescription: "每次推理调用结束后都会写入基础审计记录。",
     time: "时间",
     requestId: "请求 ID",
     threadId: "Thread ID",
     copyThreadId: "复制 Thread ID",
-    sessionId: "Session ID",
-    copySessionId: "复制 Session ID",
-    copyUserId: "复制用户 ID",
     provider: "上游提供商",
-    latency: "延迟",
     firstByteLatency: "首字节",
     totalLatency: "总耗时",
     requestSize: "请求大小",
     responseSize: "响应大小",
-    codexTurnStateLength: "x-codex-turn-state 字符串长度",
-    codexTurnStateLengthWarning: "x-codex-turn-state=312，可能发生模型降级",
     requestTransportSize: "请求传输量（压缩后）",
     responseTransportSize: "响应传输量（压缩后）",
     compressionRatio: "压缩率",
@@ -1030,7 +864,6 @@ const copy = {
     upstreamContentEncoding: "上游响应压缩",
     networkTransport: "网络传输量（压缩后）",
     reasoningEffort: "推理强度",
-    fastMode: "Fast 模式",
     cachedInput: "缓存输入",
     details: "详情",
     filter: "筛选",
@@ -1050,8 +883,6 @@ const copy = {
     requestDetail: "请求详情",
     requestSummary: "请求概要",
     backToAudit: "返回推理审计",
-    auditDetailDescription:
-      "展示已保留的请求与响应诊断预览；敏感凭据不会记录。",
     requestHeaders: "请求头",
     requestBody: "请求正文",
     responseHeaders: "响应头",
@@ -1082,31 +913,16 @@ const copy = {
     lbToDownstream: "LB → 下游",
     different: "不同",
     previewTruncated: "预览已截断",
-    responseImages: "响应图片",
-    revisedPrompt: "修订后的提示词",
-    auditArchiveUnavailable: "此请求的诊断记录已过期或不可用。",
     affinitySource: "亲和来源",
     affinityRequestId: "亲和请求 ID",
     affinityHash: "亲和哈希",
     previousRequest: "上一个请求",
     nextRequest: "下一个请求",
-    messages: "消息结构",
-    requestSettings: "请求参数",
-    instructions: "Instructions",
     tools: "工具",
-    toolsDescription: "以列表查看工具定义，或切换到原始 JSON 检查完整 schema。",
-    toolsList: "工具列表",
-    rawJson: "原始 JSON",
-    toolParameters: "参数",
-    toolRequired: "必填",
-    toolOptional: "可选",
-    noTools: "未配置工具",
-    unnamedTool: "未命名工具",
-    rawRequest: "原始请求",
     identityPermissions: "身份与权限",
     identityDescription: "浏览器会话由 Auth Mini 管理；后端只验证 access JWT。",
     proxyBoundary: "代理边界",
-    proxyDescription: "仅 OpenAI / CodeX 能力，不提供其他厂商兼容协议。",
+    proxyDescription: "仅代理 DeepSeek 能力，不提供其他厂商兼容协议。",
     unableLoad: "无法加载",
     unknownError: "未知错误",
     close: "关闭",
@@ -1120,9 +936,6 @@ const copy = {
     providerConcurrencyHelp:
       "从路由到提供商起计数，直到响应结束或请求取消，流式响应包含在内。超出上限的请求按先后顺序排队。保存后立即生效；降低上限不会中断正在处理的请求。",
     providerConcurrencyInvalid: "请输入大于 0 的整数。",
-    providerQueueRefresh: "并发与排队数据每 2 秒更新。",
-    accessKey: "Access key",
-    refreshKey: "Refresh key",
     consumer: "消费者",
     input: "输入",
     output: "输出",
@@ -1130,9 +943,6 @@ const copy = {
     role: "角色",
     authIssuer: "认证签发方",
     upstream: "上游",
-    upstreamOpenaiBeta: "上游 OpenAI-Beta",
-    upstreamOpenaiBetaHint:
-      "留空时 LB 不注入此请求头；客户端自行携带的同名头仍按透传规则处理。",
     bodyLimit: "请求体限制",
     affinityTtl: "亲和 TTL",
     upstreamHint: "DeepSeek API 基址，默认 https://api.deepseek.com。",
@@ -1145,21 +955,23 @@ const copy = {
     roleRoot: "超级管理员",
     roleAdmin: "管理员",
     roleUser: "租户用户",
-    loginUnknown: "认证失败，请重试。",
     adminAuditTitle: "管理操作审计",
     adminAuditDescription:
-      "记录 root 与管理员执行的 Provider、OAuth、Token、授权、系统和审计管理操作。",
+      "记录 root 与管理员执行的提供商、密钥、系统与审计管理操作。",
     providerAuditTitle: "提供商审计",
     providerAuditDescription:
       "按上游提供商、模型和小时汇总请求结果，帮助定位失败集中在哪个上游或模型。",
-    providerAuditChartDescription: "当前筛选范围内按小时观察失败率、请求数和输入 Token。",
+    providerAuditChartDescription:
+      "当前筛选范围内按小时观察失败率、请求数和输入 Token。",
     providerAuditFailureRateChart: "时间—失败率",
     providerAuditRequestCountChart: "时间—请求数",
     providerAuditInputTokensChart: "时间—Input Token 数",
     providerAuditPeriod: "数据范围",
-    providerAuditTableDescription: "每行代表一个小时、一个上游提供商和一个模型。",
+    providerAuditTableDescription:
+      "每行代表一个小时、一个上游提供商和一个模型。",
     providerAuditNoData: "所选时间范围暂无请求",
-    providerAuditNoDataDescription: "产生请求后，这里会按小时显示各个上游和模型的结果。",
+    providerAuditNoDataDescription:
+      "产生请求后，这里会按小时显示各个上游和模型的结果。",
     providerAuditAllProviders: "全部提供商",
     providerAuditUnknownProvider: "未识别提供商",
     providerAuditHour: "小时",
@@ -1169,30 +981,6 @@ const copy = {
     providerAuditFailedRequests: "失败请求",
     providerAuditTotalRequests: "请求总数",
     providerAuditInputTokens: "Input Token 数",
-    providerAuditProviders: "提供商数",
-    providerAuditModels: "模型数",
-    modelDowngradeTitle: "模型降级审计",
-    modelDowngradeDescription:
-      "上游有时会用其他模型完成请求；这里汇总下游请求模型与上游实际返回模型的映射关系。",
-    modelDowngradeFlowChart: "下游模型 → 上游提供商 → 上游模型",
-    modelDowngradeFlowDescription:
-      "流量从下游请求模型流向承接请求的上游提供商，再流向上游实际返回的模型；红色连接表示该链路上存在上游返回与下游请求不一致的请求，精确数量见下方表格。",
-    modelDowngradeRateChart: "时间—降级率",
-    modelDowngradeRate: "降级率",
-    modelDowngradeRateDescription:
-      "降级率 = 上游实际模型与下游请求模型不一致的请求 / 已记录上游模型的请求。",
-    modelDowngradePeriod: "数据范围",
-    modelDowngradeTableDescription:
-      "每行代表一个上游提供商、上游实际模型与下游请求模型的组合。",
-    modelDowngradeAuditedRequests: "已记录上游模型的请求",
-    modelDowngradeDowngradedRequests: "降级请求",
-    modelDowngradeConsistent: "一致",
-    modelDowngradeDowngraded: "降级",
-    modelDowngradeUpstreamModel: "上游实际模型",
-    modelDowngradeDownstreamModel: "下游请求模型",
-    modelDowngradeNoData: "所选时间范围暂无上游模型记录",
-    modelDowngradeNoDataDescription:
-      "上游在完成或失败事件中带上模型后，这里会显示模型映射与降级率。",
     administrator: "操作用户",
     action: "操作",
     target: "目标",
@@ -1204,17 +992,12 @@ const copy = {
       "填写品牌提供的 Auth Mini HTTPS 地址。DeepSeek-LB 只连接该实例，不会部署或管理它。",
     setupAudience: "JWT audience",
     connectAuth: "连接 Auth Mini",
-    changeAuth: "更换实例",
     setupLogin: "验证 root 身份",
     setupLoginHelp:
       "登录成功后，当前 Auth Mini user_id 将成为 DeepSeek-LB root。",
     finishSetup: "绑定 root 并完成初始化",
     finishingSetup: "正在完成初始化",
     setupStepConnect: "连接认证实例",
-    setupStepLogin: "验证首个用户",
-    setupStepFinish: "绑定 root",
-    setupConnected: "已连接",
-    setupWaiting: "待完成",
     setupAuthenticated: "身份已验证",
     setupSecurity:
       "Setup 完成后初始化入口会立即关闭；后续登录用户默认为 user。",
@@ -1226,16 +1009,6 @@ const copy = {
     roleUpdated: "用户角色已更新",
     allowDebt: "允许欠费",
     allowDebtUpdated: "允许欠费设置已更新",
-    platformCapacityTitle: "平台上游可用额度",
-    platformCapacityDescription:
-      "每 5 分钟轮询全部上游的套餐与主限额窗口；Plus 按 1×、Pro Lite 按 5×、Pro 按 20× 归一。仅纳入已成功采样且额度可比的 Plus、Pro Lite、Pro 账户。",
-    platformPlusCapacity: "Plus 等价剩余额度",
-    platformCapacitySampledAt: "最近采样",
-    platformCapacityPending: "等待首次采样",
-    platformCapacityTrend: "近 7 天额度趋势",
-    platformCapacityTrendDescription:
-      "展示每次采样的平台 Plus 等价剩余额度。",
-    platformCapacityTrendPending: "等待历史采样数据。",
     runtimeSettings: "运行配置",
     runtimeSettingsDescription:
       "这些值保存在 SQLite app_meta 中；地址与模型立即生效，请求体上限重启后生效。",
@@ -1249,109 +1022,19 @@ const copy = {
     modelPriceMultiplierHint:
       "未来请求按官方费用乘以此倍率计费；每条请求都会保存当时的倍率快照。",
     allowAllUsersDebt: "允许所有人欠费",
-    allowAllUsersDebtHint:
-      "打开后，所有用户均可在可用额度不足时继续发送请求。",
+    allowAllUsersDebtHint: "打开后，所有用户均可在可用额度不足时继续发送请求。",
     saveSettings: "保存配置",
     settingsSaved: "配置已保存",
-    imageHostModel: "图像宿主模型",
-    oauthAuthorizeUrl: "OAuth 授权地址",
-    oauthTokenUrl: "OAuth Token 地址",
-    oauthRedirectUri: "OAuth 回调地址",
-    oauthClientId: "OAuth Client ID",
-    responseLimit: "Responses 限制",
-    imageLimit: "图像请求限制",
-    audioLimit: "音频请求限制",
-    transcriptionInput: "音频输入",
-    transcriptionInputHelp: "上传音频文件，或直接使用浏览器麦克风录音。",
-    transcriptionModel: "模型 ID",
-    transcriptionModelId: "gpt-4o-transcribe",
-    selectAudio: "选择音频",
-    startRecording: "开始录音",
-    stopRecording: "停止录音",
-    recording: "正在录音",
-    languageHint: "语言提示",
-    languageAuto: "自动检测",
-    languageChinese: "中文",
-    languageEnglish: "英文",
-    transcribe: "转写为文字",
-    transcribing: "正在转写",
-    transcript: "转写结果",
-    transcriptEmpty: "选择或录制音频后，转写文本会显示在这里。",
-    copyTranscript: "复制转写结果",
-    microphoneUnavailable: "当前浏览器不支持麦克风录音，请上传音频文件。",
-    microphoneDenied: "无法访问麦克风，请检查浏览器权限后重试。",
-    noAudioSelected: "请先选择或录制音频。",
-    realtimeStart: "开始实时语音",
-    realtimeStop: "结束对话",
-    realtimeIdle: "准备就绪",
-    realtimeConnecting: "正在建立安全语音连接…",
-    realtimeLive: "实时对话中",
-    realtimeConnectionFailed: "实时语音连接已中断，请重试。",
-    realtimeInstruction: "对话指令",
-    realtimeInstructionHelp:
-      "这段指令会随会话发送给实时模型。默认是简洁、自然的中文语音助手。",
-    realtimeTranscript: "实时转写",
-    realtimeTranscriptEmpty: "开始说话后，输入与输出的实时转写会显示在这里。",
-    realtimeRouteTitle: "实时语音链路",
-    realtimeRouteDescription:
-      "浏览器媒体通过 WebRTC 建立；LB 只代理受保护的会话创建与 sideband 控制信令。",
-    realtimePublicEndpoint: "公开接口",
-    realtimeUpstreamEndpoint: "OpenAI Realtime 上游",
-    realtimeMicrophoneHelp:
-      "开始后浏览器会请求麦克风权限；结束对话会立即关闭本地音频轨道。",
-    imagePrompt: "图像提示词",
-    imagePromptPlaceholder:
-      "描述你想生成的图像，包括主体、构图、风格和需要呈现的文字。",
-    imageReference: "参考图片",
-    imageReferenceHelp:
-      "可选：上传 PNG、JPEG、WEBP 或 GIF 作为构图、风格或主体参考；最多 4 张，合计不超过 8 MiB。",
-    imageReferenceCount: "已添加",
-    removeReferenceImage: "移除参考图片",
-    imageReferenceInvalid: "请选择 PNG、JPEG、WEBP 或 GIF 图片。",
-    imageReferenceTooLarge: "单张参考图片不能超过 4 MiB。",
-    imageReferenceCountExceeded: "最多添加 4 张参考图片。",
-    imageReferenceTotalExceeded: "参考图片合计不能超过 8 MiB。",
-    imageReferenceReadError: "读取参考图片失败，请重试。",
-    imageSize: "画面比例",
-    imageQuality: "生成质量",
-    imageSquare: "正方形",
-    imageLandscape: "横向",
-    imagePortrait: "纵向",
-    image2kSquare: "2K 正方形",
-    image2kLandscape: "2K 横向",
-    image4kLandscape: "4K 横向",
-    image4kPortrait: "4K 纵向",
-    imageCustom: "自定义尺寸",
-    imageWidth: "宽度（px）",
-    imageHeight: "高度（px）",
-    imageSizeHelp:
-      "支持 gpt-image-2：宽高均为 16 的倍数、最大 3840px、比例不超过 3:1，总像素 655,360–8,294,400；超过 2560 × 1440 的输出为实验性。",
-    imageSizeInvalid: "请输入符合上述限制的宽度和高度。",
-    imageAuto: "自动",
-    imageDraft: "草稿",
-    imageStandard: "标准",
-    imageHigh: "高",
-    generateImage: "生成图片",
-    generatingImage: "正在生成",
-    generatedImage: "生成结果",
-    imageEmpty: "填写图像提示词后，生成的图片会显示在这里。",
-    downloadImage: "下载图片",
-    noImagePrompt: "请先填写图像提示词。",
-    imageGenerationFailed: "图片生成失败。",
-    imageGenerationRetry: "请稍后重试；如果仍然失败，请调整提示词。",
-    imageGenerationDetail: "上游详情",
+    responseLimit: "请求体与响应预览上限 (bytes)",
   },
   en: {
     dashboard: "Overview",
     providers: "Providers",
     consumers: "Consumers",
-    "codex-integration": "ChatGPT (CodeX)",
+    "codex-integration": "Codex",
     "dsh-integration": "DSH (DeepSeek Harness)",
     "opencode-integration": "OpenCode",
     "direct-api-integration": "Direct API",
-    transcriptions: "Speech to text",
-    realtime: "Realtime voice",
-    images: "Image Generation",
     usage: "Usage",
     audit: "Inference audit",
     topups: "Top up",
@@ -1359,46 +1042,31 @@ const copy = {
     "system-resources": "System resources",
     "admin-audit": "Admin audit",
     "provider-audit": "Provider audit",
-    "model-downgrade-audit": "Model downgrade audit",
     users: "Users",
     settings: "Settings",
-    signout: "Sign out",
     title: "DeepSeek-LB",
-    subtitle: "CodeX OAuth load balancer",
-    console: "Console",
+    subtitle: "DeepSeek API reverse proxy and load balancer",
     navigationWorkspace: "Workspace",
     navigationIntegrations: "Downstream integrations",
-    navigationTools: "Tools",
     navigationData: "Data",
     navigationAdministration: "Administration",
     english: "简体中文",
     roleLoading: "Loading",
-    loginDescription: "Sign in to the operations console with Auth Mini",
-    email: "Email",
-    authRedirectTitle: "Verify your identity in Auth Mini",
-    authRedirectHelp:
-      "Email codes, passkeys, and ED25519 sign-in stay on the Auth Mini page. You will return to DeepSeek-LB after signing in.",
     continueAuthMini: "Continue to Auth Mini",
     loading: "Loading DeepSeek-LB…",
     pageDashboard: "Review the current account's 24-hour operating summary.",
     pageProviders:
-      "Manage CodeX OAuth Providers you own, their runtime state, and user access.",
+      "Manage the DeepSeek Providers you own, their runtime state, and 7-day usage.",
     pageConsumers:
       "Give each AI app its own downstream Consumer so usage, errors, and revocation stay isolated.",
     pageCodexIntegration:
-      "Configure the local ChatGPT (CodeX) file manually or in the browser with a dedicated downstream Consumer.",
+      "Configure the local Codex file manually or via the browser, with a dedicated downstream Consumer.",
     pageDshIntegration:
       "Configure local DSH manually or authorize the browser to configure it with a dedicated downstream Consumer.",
     pageOpenCodeIntegration:
       "Configure the local OpenCode file manually or in the browser with a dedicated downstream Consumer.",
     pageDirectApiIntegration:
       "Call the DeepSeek API through DeepSeek-LB with a dedicated downstream Consumer.",
-    pageTranscriptions:
-      "Record or upload audio, then transcribe it through a CodeX OAuth Provider available to the current user.",
-    pageRealtime:
-      "Talk to the realtime voice model over WebRTC while DeepSeek-LB securely proxies session creation and control signaling to the OpenAI Realtime API.",
-    pageImages:
-      "Generate one image from a text prompt through a CodeX OAuth Provider available to the current user.",
     pageUsage:
       "Attribute requests, tokens, official cost, and actual cost to each Consumer.",
     pageAudit:
@@ -1406,17 +1074,15 @@ const copy = {
     pageTopups:
       "Manage Midas funding, agreement authorization, and available credit.",
     pageModelPrices:
-      "Review an official OpenAI standard token-pricing snapshot, shown per 1M tokens.",
+      "Review the official DeepSeek token-pricing snapshot, shown per 1M tokens.",
     pageSystemResources:
       "Review current host load and DeepSeek-LB data usage. Available only to root and administrators.",
     pageAdminAudit:
       "Review management operations performed by root and administrators.",
     pageProviderAudit:
       "Review successful and failed requests by upstream provider, model, and hour over the last 7 days.",
-    pageModelDowngradeAudit:
-      "Compare the requested downstream model with the model the upstream actually reported serving.",
     pageRequestDetail:
-      "Review call context, message structure, and adjacent requests with the same Session ID.",
+      "Review call context, message structure, and adjacent requests with the same Thread ID.",
     pageUsers:
       "Root manages local roles and global Provider access while Auth Mini remains the identity provider.",
     pageSettings:
@@ -1439,8 +1105,6 @@ const copy = {
     providedValue: "Cumulative provided value (USD)",
     officialCost: "Official cost (USD)",
     actualCost: "Actual cost (USD)",
-    officialProvidedValue: "Official cumulative provided value (USD)",
-    actualProvidedValue: "Actual cumulative provided value (USD)",
     priceMultiplier: "Price multiplier",
     officialConsumedUsdBefore: "Official cumulative cost before (USD)",
     officialConsumedUsdAfter: "Official cumulative cost after (USD)",
@@ -1464,19 +1128,25 @@ const copy = {
     cumulativeConsumption: "Cumulative consumption (USD)",
     requestNotEnforced:
       "Requests are currently not blocked for insufficient available credit.",
-    requestEnforced: "Requests are blocked when available credit is insufficient.",
+    requestEnforced:
+      "Requests are blocked when available credit is insufficient.",
     midasFundTitle: "Transfer to the DeepSeek-LB public account",
-    midasFundDescription: "Enter an amount to open Midas in a new window. It shows the recipient and amount read-only; sign in and confirm to complete the top-up.",
+    midasFundDescription:
+      "Enter an amount to open Midas in a new window. It shows the recipient and amount read-only; sign in and confirm to complete the top-up.",
     topupAmount: "Top-up amount (USD)",
-    topupAmountHint: "Up to 9 decimal places. Midas transfers this exact amount in USD nanodollars.",
+    topupAmountHint:
+      "Up to 9 decimal places. Midas transfers this exact amount in USD nanodollars.",
     continueToMidas: "Continue to Midas",
     publicWalletUserId: "DeepSeek-LB public-account user ID",
     copyMidasUserId: "Copy user ID",
-    midasTransferRefresh: "Refresh this page after the transfer; cumulative top-ups are read from your current Midas inbound transfers.",
+    midasTransferRefresh:
+      "Refresh this page after the transfer; cumulative top-ups are read from your current Midas inbound transfers.",
     midasUnavailable: "Midas is not configured",
-    midasUnavailableDescription: "Ask root to configure the Midas public-account user ID and fund API key in Settings.",
+    midasUnavailableDescription:
+      "Ask root to configure the Midas public-account user ID and fund API key in Settings.",
     midasSettings: "Midas",
-    midasSettingsDescription: "Midas is the only top-up ledger. The public-account user ID is safe to share with payers; the fund API key stays in server SQLite, and a blank key retains the current key.",
+    midasSettingsDescription:
+      "Midas is the only top-up ledger. The public-account user ID is safe to share with payers; the fund API key stays in server SQLite, and a blank key retains the current key.",
     midasApiBase: "API base URL",
     midasFundUserId: "Public-account user ID",
     midasFundApiKey: "Fund API key",
@@ -1492,9 +1162,6 @@ const copy = {
     officialModelPriceTable: "Token pricing",
     modelPricesTableDescription:
       "Peak and off-peak rates are shown separately. Off-peak costs 50% of peak, and Chinese public holidays are billed off-peak all day.",
-    shortContext: "Short context",
-    longContext: "Long context",
-    cacheWrite: "Cache write",
     activeProviders: "Active providers",
     peakCalls24h: "Peak-hour requests (24h)",
     pricingTariffTitle: "Current billing window",
@@ -1522,7 +1189,7 @@ const copy = {
     load1m: "1-minute load",
     logicalCpus: "Logical CPUs",
     available: "Available",
-    openaiLbRss: "DeepSeek-LB RSS",
+    lbRss: "DeepSeek-LB RSS",
     otherSystemMemory: "Other system usage",
     systemAvailableMemory: "System available memory",
     swap: "Swap",
@@ -1584,61 +1251,17 @@ const copy = {
     addProvider: "Add provider",
     noProviders: "No providers",
     noProvidersDescription:
-      "Sign in to OpenAI OAuth in a browser, or import an existing Access Key and Refresh Key.",
+      "Add a Provider with a DeepSeek API key to join the scheduling pool.",
     name: "Name",
-    account: "Account",
     owner: "Owner",
     status: "Status",
-    circuitBreaker: "Circuit breaker",
-    circuitOpen: "Circuit open",
-    circuitRecovered: "Recovered",
-    circuitNeverOpened: "No circuit history",
-    circuitUntil: "Open until",
-    circuitOpenedAt: "Opened",
-    circuitClosedAt: "Recovered",
-    circuitReason: "Trigger",
-    circuitResolution: "Resolution",
-    circuitRateLimitHeaders: "Rate-limit response headers",
-    circuitHistory: "Circuit history",
-    circuitHistoryTitle: "Provider circuit history",
-    circuitHistoryDescription:
-      "429 triggers, cooldown deadlines, and recovery results are persisted in SQLite.",
     actions: "Actions",
     refresh: "Refresh",
     providerUpdated: "Provider updated",
     providerAdded: "Provider added",
-    oauthProviderAdded: "OAuth provider added",
-    addProviderTitle: "Add CodeX OAuth provider",
-    addProviderDescription:
-      "Choose the path that matches the credentials you have. Tokens are stored as plaintext in SQLite and can only be read and edited by root and administrators.",
-    addProviderOAuth: "Sign in to OpenAI OAuth in browser",
-    addProviderOAuthDescription:
-      "Complete OpenAI sign-in in a browser, then paste the full callback URL to add the provider.",
-    addProviderCredentials: "I have an Access Key and Refresh Key",
-    addProviderCredentialsDescription:
-      "Import known credentials directly when they were securely obtained elsewhere.",
-    addProviderOAuthTitle: "Sign in to OpenAI OAuth again",
-    addProviderOAuthInProgressDescription:
-      "Complete OpenAI sign-in in the new tab, then paste the full callback URL from the browser address bar. Only Cancel can exit while this authentication is in progress.",
-    addProviderCredentialsTitle: "Import OpenAI OAuth credentials",
-    addProviderCredentialsTitleDescription:
-      "Enter an existing Access Key and Refresh Key.",
+    addProviderTitle: "Add provider",
     nameOptional: "Name (optional)",
-    providerNameHelp: "When empty, the upstream provider UUID is used.",
-    providerOriginator: "Client identity (originator)",
-    providerOriginatorCodex: "CodeX CLI (codex_cli_rs)",
-    providerOriginatorPi: "Pi Agent (pi)",
-    allowOtherOriginator: "Back up other originators",
-    allowOtherOriginatorHelp: "Accept other or unidentified clients only when no matching provider is available. Upstream requests still use this provider’s originator.",
-    originatorFallback: "Cross-originator fallback",
-    downstreamOriginator: "Downstream originator",
-    upstreamOriginator: "Upstream originator",
-    originatorFallbackReason: "Cross-originator fallback reason",
-    providerOriginatorOpencode: "OpenCode (opencode)",
-    providerOriginatorHelp:
-      "This immutable OAuth and upstream identity serves matching clients first. Cross-originator fallback can be enabled separately.",
-    providerOriginatorLockedHelp:
-      "This authorization already declared the identity; start a new OAuth flow to change it.",
+    providerNameHelp: "Falls back to the Provider UUID when empty.",
     providerVisibility: "Visibility",
     providerVisibilityPrivate: "Private",
     providerVisibilityPublic: "Public",
@@ -1646,99 +1269,17 @@ const copy = {
       "Private: only Consumers owned by this user may route to the provider. Public: every Consumer may route to it.",
     makeProviderPublic: "Publish to everyone",
     makeProviderPrivate: "Restrict to my Consumers",
-    accessClaimHelp: "Must be a JWT containing the CodeX account_id claim.",
-    callbackUrl: "Callback URL",
-    callbackUrlHelp:
-      "Paste the complete URL; code and state are parsed automatically.",
-    oauthStateHelp:
-      "OAuth state is stored once on the server and expires in 10 minutes.",
-    startOauth: "Open OpenAI sign-in",
-    completeOauth: "Finish adding provider",
-    importCredentials: "Import credentials",
-    editProvider: "Edit credentials",
     editProviderName: "Edit provider name",
     saveProviderName: "Save provider name",
     cancelProviderName: "Cancel provider name edit",
-    tokenTitle: "Edit provider credentials",
-    tokenDescription:
-      "Read and update the provider's plaintext OAuth Tokens in SQLite. Edit the name directly in the name column.",
-    loadingTokens: "Loading Tokens…",
-    saveTokens: "Save",
-    tokensSaved: "Provider saved",
     deleteProvider: "Delete",
-    deleteProviderTitle: "Delete OAuth provider?",
+    deleteProviderTitle: "Delete provider?",
     deleteProviderDescription:
-      "This hides the Provider from management and scheduling. Its Tokens, affinities, and history are retained.",
+      "This hides the Provider from management and scheduling. Its API key, affinities, and history are retained.",
     confirmDeleteProvider: "Hide provider",
     providerDeleted: "Provider hidden",
     testProvider: "Test",
-    testingProvider: "Fetching provider Usage…",
-    testTitle: "Provider Usage test",
-    testDescription:
-      "The server calls the Usage API with this provider's OAuth Token. The Token is not returned with the test result.",
-    testSucceeded: "Provider test succeeded",
-    httpProxy: "HTTP proxy",
-    upstreamProxy: "Upstream proxy",
-    proxyConfigured: "Configured",
-    proxyNotConfigured: "Not configured",
-    proxyConfigTitle: "Upstream proxy",
-    proxyConfigDescription:
-      "This proxy is used only by this provider. Saved addresses and credentials are never shown in the browser.",
-    proxyUrl: "Proxy URL",
-    proxyUrlHelp: "Only http:// is supported, for example http://username:password@host:port.",
-    saveProxy: "Save proxy",
-    removeProxy: "Remove proxy",
-    proxyDiagnostics: "Connection diagnostics",
-    proxyDiagnosticsTitle: "Provider proxy diagnostics",
-    proxyDiagnosticsDescription:
-      "The LB runs these checks. Proxy credentials are never returned to the browser.",
-    testingProxy: "Checking proxy path…",
-    testAgain: "Test again",
-    proxyExitLocation: "Exit location",
-    proxyNetworkQuality: "Network quality",
-    lbToProxy: "LB → proxy",
-    lbViaProxyToOpenAi: "LB via proxy → OpenAI",
-    proxyLatencyHelp:
-      "Shows time until a response is received; it is not one-way network latency.",
-    proxyLocationUnavailable: "Exit location unavailable",
-    proxyNotConfiguredDescription:
-      "Configure an HTTP proxy before running diagnostics.",
-    usageEmail: "Email",
-    usagePlan: "Plan",
-    quotaRemaining: "Quota remaining",
-    resetsIn: "Resets in",
-    quotaUnavailable: "Quota unavailable",
-    credits: "Credits",
-    rawUsage: "Raw Usage fields",
-    usageUnavailable:
-      "The Usage API returned no recognized quota fields. Review the raw fields below.",
-    rateLimitResetsAvailable: "Resets available",
-    viewRateLimitResets: "Reset credits",
-    rateLimitResetsTitle: "Rate-limit reset credits",
-    rateLimitResetsDescription:
-      "Redeeming a credit consumes one earned entitlement and only resets an eligible ChatGPT / Codex rate-limit window.",
-    rateLimitResetGrantedAt: "Granted",
-    rateLimitResetExpiresAt: "Expires",
-    rateLimitResetNextExpiresAt: "Credit expirations",
-    rateLimitResetExpiresIn: "Left",
-    rateLimitResetNoExpiry: "Expiry unavailable",
-    rateLimitResetExpired: "Expired",
-    rateLimitResetUnknownCredit:
-      "The server did not return item details. Confirmation will use the next available credit.",
-    rateLimitResetUse: "Use this credit",
-    rateLimitResetUseNext: "Use next credit",
-    rateLimitResetConfirmTitle: "Use a rate-limit reset credit?",
-    rateLimitResetConfirmDescription:
-      "This consumes one earned reset credit for the current Provider. A consumed credit cannot be restored.",
-    confirmRateLimitReset: "Use reset credit",
-    rateLimitResetting: "Resetting…",
-    rateLimitResetSuccess: "Rate limit reset and current status refreshed.",
-    rateLimitResetAlreadyRedeemed:
-      "This reset was already completed and the current status refreshed.",
-    rateLimitResetNothingToReset:
-      "There is no eligible rate-limit window to reset right now.",
-    rateLimitResetNoCredit:
-      "This account has no earned reset credits available.",
+    testingProvider: "Testing upstream connectivity…",
     consumersTitle: "Tenant Consumers",
     consumersDescription:
       "Create one downstream Consumer per AI app so usage, errors, and key rotation remain isolated. Secrets are shown after creation and rotation only.",
@@ -1754,10 +1295,6 @@ const copy = {
     requestArchiveHelp:
       "When enabled, this Consumer's request/response diagnostic previews are saved to SQLite.",
     requestArchiveUpdated: "Diagnostic archive setting updated",
-    interceptDegradation: "Degradation interception",
-    interceptDegradationHelp:
-      "When enabled, successful upstream responses carrying an x-codex-turn-state header of 312 bytes (a possible model downgrade) are cancelled and returned as a 503 error.",
-    interceptDegradationUpdated: "Degradation interception updated",
     consumerEnabled: "Consumer enabled",
     consumerDisabledUpdated: "Consumer status updated",
     rotateConsumer: "Rotate and copy",
@@ -1794,7 +1331,6 @@ const copy = {
       "Usage appears here by dimension after API calls in the selected period.",
     requests: "Requests",
     errors: "Errors",
-    averageLatency: "Average latency",
     last24Hours: "Last 24 hours",
     last7Days: "Last 7 days",
     allUsers: "All users",
@@ -1802,21 +1338,6 @@ const copy = {
     allModels: "All models",
     userLabel: "User",
     model: "Model",
-    downstreamModel: "Downstream model",
-    upstreamModel: "Upstream model",
-    downstreamUserAgent: "Downstream UA",
-    modelDowngraded: "Model downgrade",
-    modelMismatchHint:
-      "The upstream model differs from the downstream requested model.",
-    upstreamUserAgent: "Upstream UA",
-    upstreamUserAgentHint:
-      "Override User-Agent per originator for upstream requests immediately after saving. Leave empty to keep existing behavior; downstream UA still records the original request value.",
-    experimentalTurnState312Filter: "Experimental 312 Turn State filter",
-    experimentalTurnState312FilterHint:
-      "When enabled, an x-codex-turn-state request header exactly 312 bytes long is removed before forwarding upstream. Disabled by default.",
-    upstreamUserAgentCodex: "codex_cli_rs UA",
-    upstreamUserAgentPi: "pi UA",
-    upstreamUserAgentOpencode: "opencode UA",
     consumerLabel: "Consumer",
     date: "Date",
     rows: "Rows",
@@ -1826,19 +1347,16 @@ const copy = {
     inputTokens: "Input Tokens",
     cachedInputTokens: "Cached Input Tokens",
     outputTokens: "Output Tokens",
-    cost: "Cost (USD)",
     requestCount: "Request count",
     usageRows: "aggregated rows",
     sortColumn: "Sort",
     total: "Total",
     clearFilters: "Clear filters",
     pivotFields: "Pivot fields",
-    groupOrder: "Grouping order",
     dataOrder: "Data column order",
-    sum: "Sum",
     auditTitle: "Inference audit",
     auditDescription:
-      "Request/response diagnostic previews are stored in SQLite; Authorization and OAuth credentials are excluded.",
+      "Request/response diagnostic previews are stored in SQLite; Authorization headers and upstream API keys are excluded.",
     noAudit: "No inference audit records",
     noAuditDescription:
       "A basic inference audit record is written when each proxy call terminates.",
@@ -1846,17 +1364,11 @@ const copy = {
     requestId: "Request ID",
     threadId: "Thread ID",
     copyThreadId: "Copy Thread ID",
-    sessionId: "Session ID",
-    copySessionId: "Copy Session ID",
-    copyUserId: "Copy User ID",
     provider: "Provider",
-    latency: "Latency",
     firstByteLatency: "First byte",
     totalLatency: "Total",
     requestSize: "Request size",
     responseSize: "Response size",
-    codexTurnStateLength: "x-codex-turn-state string length",
-    codexTurnStateLengthWarning: "x-codex-turn-state=312; possible model downgrade",
     requestTransportSize: "Request transport (compressed)",
     responseTransportSize: "Response transport (compressed)",
     compressionRatio: "Compression ratio",
@@ -1866,7 +1378,6 @@ const copy = {
     upstreamContentEncoding: "Upstream response encoding",
     networkTransport: "Network transport (compressed)",
     reasoningEffort: "Reasoning effort",
-    fastMode: "Fast mode",
     cachedInput: "Cached input",
     details: "Details",
     filter: "Filter",
@@ -1886,8 +1397,6 @@ const copy = {
     requestDetail: "Request details",
     requestSummary: "Request summary",
     backToAudit: "Back to inference audit",
-    auditDetailDescription:
-      "Shows retained request and response diagnostic previews; sensitive credentials are excluded.",
     requestHeaders: "Request headers",
     requestBody: "Request body",
     responseHeaders: "Response headers",
@@ -1920,35 +1429,18 @@ const copy = {
     lbToDownstream: "LB → Downstream",
     different: "Different",
     previewTruncated: "Preview truncated",
-    responseImages: "Response images",
-    revisedPrompt: "Revised prompt",
-    auditArchiveUnavailable:
-      "The diagnostic record for this request has expired or is unavailable.",
     affinitySource: "Affinity source",
     affinityRequestId: "Affinity request ID",
     affinityHash: "Affinity hash",
     previousRequest: "Previous request",
     nextRequest: "Next request",
-    messages: "Message structure",
-    requestSettings: "Request settings",
-    instructions: "Instructions",
     tools: "Tools",
-    toolsDescription:
-      "Review tool definitions as a list, or switch to raw JSON to inspect the complete schema.",
-    toolsList: "Tool list",
-    rawJson: "Raw JSON",
-    toolParameters: "Parameters",
-    toolRequired: "Required",
-    toolOptional: "Optional",
-    noTools: "No tools configured",
-    unnamedTool: "Unnamed tool",
-    rawRequest: "Raw request",
     identityPermissions: "Identity and permissions",
     identityDescription:
       "Auth Mini manages the browser session; the backend only verifies access JWTs.",
     proxyBoundary: "Proxy boundary",
     proxyDescription:
-      "OpenAI / CodeX capabilities only; no other vendor protocol compatibility.",
+      "Proxies DeepSeek capabilities only; no other vendor protocol compatibility.",
     unableLoad: "Unable to load",
     unknownError: "Unknown error",
     close: "Close",
@@ -1962,10 +1454,6 @@ const copy = {
     providerConcurrencyHelp:
       "A request occupies a slot from routing until the response ends or the request is cancelled, including streaming responses. Extra requests queue in arrival order. Changes apply immediately; lowering the limit lets active requests finish.",
     providerConcurrencyInvalid: "Enter a whole number greater than 0.",
-    providerQueueRefresh:
-      "Concurrency and queue counts update every 2 seconds.",
-    accessKey: "Access key",
-    refreshKey: "Refresh key",
     consumer: "Consumer",
     input: "Input",
     output: "Output",
@@ -1973,12 +1461,10 @@ const copy = {
     role: "Role",
     authIssuer: "Auth issuer",
     upstream: "Upstream",
-    upstreamOpenaiBeta: "Upstream OpenAI-Beta",
-    upstreamOpenaiBetaHint:
-      "When empty, LB does not inject this header. A same-named client header still follows the transparent forwarding policy.",
     bodyLimit: "Body limit",
     affinityTtl: "Affinity TTL",
-    upstreamHint: "DeepSeek API base URL; defaults to https://api.deepseek.com.",
+    upstreamHint:
+      "DeepSeek API base URL; defaults to https://api.deepseek.com.",
     archiveRetention: "Request and response diagnostic retention (days)",
     statusActive: "Available",
     statusCooldown: "Cooling down",
@@ -1988,10 +1474,9 @@ const copy = {
     roleRoot: "Root",
     roleAdmin: "Administrator",
     roleUser: "Tenant user",
-    loginUnknown: "Authentication failed. Try again.",
     adminAuditTitle: "Administrative operation audit",
     adminAuditDescription:
-      "Provider, OAuth, Token, access, system, and audit management operations performed by root and administrators.",
+      "Provider, key, system, and audit management operations performed by root and administrators.",
     providerAuditTitle: "Provider audit",
     providerAuditDescription:
       "Summarize request outcomes by upstream provider, model, and hour to locate concentrated failures.",
@@ -2015,31 +1500,6 @@ const copy = {
     providerAuditFailedRequests: "Failed requests",
     providerAuditTotalRequests: "Total requests",
     providerAuditInputTokens: "Input Tokens",
-    providerAuditProviders: "Providers",
-    providerAuditModels: "Models",
-    modelDowngradeTitle: "Model downgrade audit",
-    modelDowngradeDescription:
-      "An upstream can answer with a different model than the one requested; this page summarizes how requested models map to served models.",
-    modelDowngradeFlowChart:
-      "Downstream model → upstream provider → upstream model",
-    modelDowngradeFlowDescription:
-      "Traffic flows from the requested downstream model to the upstream provider that served it and then to the model it actually reported; red links carry requests whose served model differs from the requested one, with exact counts in the table below.",
-    modelDowngradeRateChart: "Time — downgrade rate",
-    modelDowngradeRate: "Downgrade rate",
-    modelDowngradeRateDescription:
-      "Downgrade rate = requests whose served upstream model differs from the requested model / requests with a recorded upstream model.",
-    modelDowngradePeriod: "Data range",
-    modelDowngradeTableDescription:
-      "Each row is one combination of upstream provider, served upstream model, and requested downstream model.",
-    modelDowngradeAuditedRequests: "Requests with a served model",
-    modelDowngradeDowngradedRequests: "Downgraded requests",
-    modelDowngradeConsistent: "Consistent",
-    modelDowngradeDowngraded: "Downgraded",
-    modelDowngradeUpstreamModel: "Served upstream model",
-    modelDowngradeDownstreamModel: "Requested downstream model",
-    modelDowngradeNoData: "No served model in the selected range",
-    modelDowngradeNoDataDescription:
-      "Once an upstream reports its model on a completion or failure event, mappings and the downgrade rate show up here.",
     administrator: "Actor",
     action: "Action",
     target: "Target",
@@ -2052,17 +1512,12 @@ const copy = {
       "Enter the Auth Mini HTTPS URL supplied by the brand. DeepSeek-LB connects to it; it does not deploy or manage it.",
     setupAudience: "JWT audience",
     connectAuth: "Connect Auth Mini",
-    changeAuth: "Change instance",
     setupLogin: "Verify the root identity",
     setupLoginHelp:
       "After sign-in, this Auth Mini user_id becomes the DeepSeek-LB root.",
     finishSetup: "Bind root and finish setup",
     finishingSetup: "Finishing setup",
     setupStepConnect: "Connect identity",
-    setupStepLogin: "Verify first user",
-    setupStepFinish: "Bind root",
-    setupConnected: "Connected",
-    setupWaiting: "Pending",
     setupAuthenticated: "Identity verified",
     setupSecurity:
       "The setup endpoint closes immediately after completion. Later first-time users receive the user role.",
@@ -2075,16 +1530,6 @@ const copy = {
     roleUpdated: "User role updated",
     allowDebt: "Allow debt",
     allowDebtUpdated: "Allow-debt setting updated",
-    platformCapacityTitle: "Platform upstream capacity",
-    platformCapacityDescription:
-      "All upstream plans and primary quota windows are polled every 5 minutes. Plus counts as 1×, Pro Lite as 5×, and Pro as 20×. Only successfully sampled, comparable Plus, Pro Lite, and Pro accounts are included.",
-    platformPlusCapacity: "Remaining Plus-equivalent quota",
-    platformCapacitySampledAt: "Last sampled",
-    platformCapacityPending: "Waiting for first sample",
-    platformCapacityTrend: "Capacity trend, last 7 days",
-    platformCapacityTrendDescription:
-      "Shows the platform Plus-equivalent quota remaining at each sample.",
-    platformCapacityTrendPending: "Waiting for historical samples.",
     runtimeSettings: "Runtime settings",
     runtimeSettingsDescription:
       "These values live in SQLite app_meta. URLs and models apply immediately; body limits apply after restart.",
@@ -2103,100 +1548,7 @@ const copy = {
       "When enabled, every user can continue making requests after available credit is exhausted.",
     saveSettings: "Save settings",
     settingsSaved: "Settings saved",
-    imageHostModel: "Image host model",
-    oauthAuthorizeUrl: "OAuth authorize URL",
-    oauthTokenUrl: "OAuth token URL",
-    oauthRedirectUri: "OAuth redirect URI",
-    oauthClientId: "OAuth client ID",
-    responseLimit: "Responses limit",
-    imageLimit: "Image request limit",
-    audioLimit: "Audio request limit",
-    transcriptionInput: "Audio input",
-    transcriptionInputHelp:
-      "Upload an audio file or record directly with the browser microphone.",
-    transcriptionModel: "Model ID",
-    transcriptionModelId: "gpt-4o-transcribe",
-    selectAudio: "Choose audio",
-    startRecording: "Start recording",
-    stopRecording: "Stop recording",
-    recording: "Recording",
-    languageHint: "Language hint",
-    languageAuto: "Auto-detect",
-    languageChinese: "Chinese",
-    languageEnglish: "English",
-    transcribe: "Transcribe",
-    transcribing: "Transcribing",
-    transcript: "Transcript",
-    transcriptEmpty: "Choose or record audio to see the transcript here.",
-    copyTranscript: "Copy transcript",
-    microphoneUnavailable:
-      "This browser cannot record audio. Upload an audio file instead.",
-    microphoneDenied:
-      "Microphone access failed. Check browser permissions and try again.",
-    noAudioSelected: "Choose or record audio first.",
-    realtimeStart: "Start realtime voice",
-    realtimeStop: "End conversation",
-    realtimeIdle: "Ready",
-    realtimeConnecting: "Creating a secure voice connection…",
-    realtimeLive: "Live conversation",
-    realtimeConnectionFailed: "The realtime voice connection ended. Please try again.",
-    realtimeInstruction: "Conversation instructions",
-    realtimeInstructionHelp:
-      "This is sent with the realtime session. The default is a concise, natural voice assistant.",
-    realtimeTranscript: "Live transcript",
-    realtimeTranscriptEmpty:
-      "Realtime input and output transcripts appear here after you start speaking.",
-    realtimeRouteTitle: "Realtime voice route",
-    realtimeRouteDescription:
-      "WebRTC carries browser media; the LB proxies only protected session creation and sideband control signaling.",
-    realtimePublicEndpoint: "Public endpoint",
-    realtimeUpstreamEndpoint: "OpenAI Realtime upstream",
-    realtimeMicrophoneHelp:
-      "Starting requests microphone permission. Ending the conversation immediately closes local audio tracks.",
-    imagePrompt: "Image prompt",
-    imagePromptPlaceholder:
-      "Describe the subject, composition, style, and any text that should appear in the image.",
-    imageReference: "Reference images",
-    imageReferenceHelp:
-      "Optional: add PNG, JPEG, WEBP, or GIF images for composition, style, or subject reference; up to 4 images and 8 MiB total.",
-    imageReferenceCount: "Added",
-    removeReferenceImage: "Remove reference image",
-    imageReferenceInvalid: "Choose PNG, JPEG, WEBP, or GIF images.",
-    imageReferenceTooLarge: "Each reference image must be 4 MiB or smaller.",
-    imageReferenceCountExceeded: "You can add up to 4 reference images.",
-    imageReferenceTotalExceeded:
-      "Reference images must be 8 MiB or smaller in total.",
-    imageReferenceReadError: "Could not read the reference image. Try again.",
-    imageSize: "Aspect ratio",
-    imageQuality: "Generation quality",
-    imageSquare: "Square",
-    imageLandscape: "Landscape",
-    imagePortrait: "Portrait",
-    image2kSquare: "2K square",
-    image2kLandscape: "2K landscape",
-    image4kLandscape: "4K landscape",
-    image4kPortrait: "4K portrait",
-    imageCustom: "Custom size",
-    imageWidth: "Width (px)",
-    imageHeight: "Height (px)",
-    imageSizeHelp:
-      "gpt-image-2 accepts dimensions in multiples of 16, up to 3840px, with an aspect ratio up to 3:1 and 655,360–8,294,400 total pixels. Outputs above 2560 × 1440 are experimental.",
-    imageSizeInvalid: "Enter a width and height that meet these limits.",
-    imageAuto: "Auto",
-    imageDraft: "Draft",
-    imageStandard: "Standard",
-    imageHigh: "High",
-    generateImage: "Generate image",
-    generatingImage: "Generating image",
-    generatedImage: "Generated image",
-    imageEmpty:
-      "The generated image will appear here after you submit a prompt.",
-    downloadImage: "Download image",
-    noImagePrompt: "Enter an image prompt first.",
-    imageGenerationFailed: "Image generation failed.",
-    imageGenerationRetry:
-      "Try again later; if it keeps failing, adjust the prompt.",
-    imageGenerationDetail: "Upstream detail",
+    responseLimit: "Request & response body limit (bytes)",
   },
 } satisfies Record<Locale, Record<string, string>>
 
@@ -2506,11 +1858,9 @@ function Console({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
   const isAdministrator = user?.role === "root" || user?.role === "admin"
   const requestedPage = pageForPath(location.pathname)
   const page =
-    [
-      "system-resources",
-      "admin-audit",
-      "provider-audit",
-    ].includes(requestedPage) && !isAdministrator
+    ["system-resources", "admin-audit", "provider-audit"].includes(
+      requestedPage
+    ) && !isAdministrator
       ? "dashboard"
       : requestedPage
   const navigationGroups: NavigationGroup[] = [
@@ -2563,11 +1913,13 @@ function Console({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
               alt=""
               aria-hidden="true"
               className="size-7 shrink-0"
-              src="/openai.svg"
+              src="/deepseek.svg"
             />
             <div className="flex min-w-0 flex-col gap-0.5 group-data-[collapsible=icon]:hidden">
               <strong className="truncate text-sm">{t.title}</strong>
-              <span className="truncate text-xs text-muted-foreground">{t.subtitle}</span>
+              <span className="truncate text-xs text-muted-foreground">
+                {t.subtitle}
+              </span>
             </div>
           </div>
         </SidebarHeader>
@@ -2843,23 +2195,23 @@ const integrationCopy: Record<
 > = {
   zh: {
     codex: {
-      integration: "ChatGPT（CodeX）",
-      consumerName: "ChatGPT (CodeX)",
+      integration: "Codex",
+      consumerName: "Codex",
       description:
-        "手动编辑本机 CodeX 配置，或授权浏览器读取和写入配置文件并自动创建专用 Consumer。",
+        "手动编辑本机 Codex 配置，或授权浏览器读取和写入配置文件并自动创建专用 Consumer。",
       preparationTitle: "专用 Consumer",
       preparationDescription:
-        "先在“下游消费者”中为 ChatGPT（CodeX）创建独立 Consumer 并保存只展示一次的密钥。手动配置需要把密钥粘贴到配置文件；自动配置只会把新密钥写入你已授权的本地文件。",
+        "先在“下游消费者”中为 Codex 创建独立 Consumer 并保存只展示一次的密钥。手动配置需要把密钥粘贴到配置文件；自动配置只会把新密钥写入你已授权的本地文件。",
       manualTitle: "手动配置",
       manualDescription:
-        "编辑用户级 ~/.codex/config.toml，将 DeepSeek-LB 设为 CodeX 的模型提供方。",
+        "编辑用户级 ~/.codex/config.toml，将 DeepSeek-LB 设为 Codex 的模型提供方。",
       manualConfigInstruction:
         "将以下内容合并到 ~/.codex/config.toml；如果已有其他设置，只更新 model_provider 与 model_providers.deepseek-lb。",
       manualTokenInstruction:
         "将 <YOUR_CONSUMER_KEY> 替换为“下游消费者”页面创建的 Consumer 密钥。不要把真实密钥提交到 Git 或共享配置仓库。",
       manualVerifyTitle: "重启并验证",
       manualVerifyDescription:
-        "保存配置后重启 CodeX。若请求失败，先用 /v1/models 验证该 Consumer 仍有效，再检查 config.toml 中的 base_url、wire_api 和密钥。",
+        "保存配置后重启 Codex。若请求失败，先用 /v1/models 验证该 Consumer 仍有效，再检查 config.toml 中的 base_url、wire_api 和密钥。",
       copyLabel: "复制",
       copiedLabel: "已复制",
       automaticTitle: "浏览器自动配置",
@@ -2889,20 +2241,20 @@ const integrationCopy: Record<
       selectConfigOnly: "请只选择名为 config.toml 的文件。",
       configInvalid:
         "config.toml 无法解析或包含当前流程无法安全更新的配置。文件未修改，也没有创建 Consumer。",
-      restartTitle: "重启 CodeX",
+      restartTitle: "重启 Codex",
       restartDescription:
-        "页面只会更新 model_provider 与 model_providers.deepseek-lb；其他 TOML 配置保持不变。写入完成后重启 CodeX。",
-      configWritten: "已写入本机 CodeX 配置；请重启 CodeX。",
+        "页面只会更新 model_provider 与 model_providers.deepseek-lb；其他 TOML 配置保持不变。写入完成后重启 Codex。",
+      configWritten: "已写入本机 Codex 配置；请重启 Codex。",
       configError: "配置未完成",
       configWriteFailed:
         "无法完成配置。请确认已授权文件访问，并选择用户目录下的 .codex/config.toml。",
       consumerCleanupFailed:
-        "无法写入 config.toml，且自动撤销新建 Consumer 失败。请在“下游消费者”中撤销名称为 ChatGPT (CodeX) 的新记录。",
+        "无法写入 config.toml，且自动撤销新建 Consumer 失败。请在“下游消费者”中撤销名称为 Codex 的新记录。",
       browserRequired: "需要 Chrome 或 Edge",
       browserRequiredDescription:
         "此操作依赖浏览器的本地文件访问能力。请用最新版 Chrome 或 Edge 打开此页面后重试。",
       fileName: "config.toml",
-      pickerDescription: "CodeX config.toml",
+      pickerDescription: "Codex config.toml",
       accept: { "application/toml": [".toml"] },
     },
     dsh: {
@@ -3012,7 +2364,8 @@ const integrationCopy: Record<
       description:
         "DeepSeek-LB 代理 OpenAI /v1 兼容接口。直接用 Bearer Consumer 密钥调用所需端点，无需编辑任何本地配置文件。",
       firstStep: "先验证服务可访问的模型列表。",
-      secondStep: "再调用 Responses API；也可调用图片或音频端点。",
+      secondStep:
+        "再调用对话补全；Codex 等客户端可使用代理后的 /v1/responses 端点。",
       modelPlaceholder: "替换为可用模型 ID",
       sensitiveTitle: "密钥与排障边界",
       sensitiveDescription:
@@ -3021,23 +2374,23 @@ const integrationCopy: Record<
   },
   en: {
     codex: {
-      integration: "ChatGPT (CodeX)",
-      consumerName: "ChatGPT (CodeX)",
+      integration: "Codex",
+      consumerName: "Codex",
       description:
-        "Edit the local CodeX configuration manually, or authorize the browser to write it and create a dedicated Consumer automatically.",
+        "Edit the local Codex configuration manually, or authorize the browser to write it and create a dedicated Consumer automatically.",
       preparationTitle: "Dedicated Consumer",
       preparationDescription:
-        "First create a dedicated Consumer for ChatGPT (CodeX) on the Consumers page and save its one-time secret. Manual setup pastes it into the config file; automatic setup writes the new secret only to the local file you authorize.",
+        "First create a dedicated Consumer for Codex on the Consumers page and save its one-time secret. Manual setup pastes it into the config file; automatic setup writes the new secret only to the local file you authorize.",
       manualTitle: "Manual configuration",
       manualDescription:
-        "Edit the user-level ~/.codex/config.toml and point CodeX at DeepSeek-LB.",
+        "Edit the user-level ~/.codex/config.toml and point Codex at DeepSeek-LB.",
       manualConfigInstruction:
         "Merge this into ~/.codex/config.toml. If other settings already exist, update only model_provider and model_providers.deepseek-lb.",
       manualTokenInstruction:
         "Replace <YOUR_CONSUMER_KEY> with the Consumer secret created on the Consumers page. Never commit a real secret to Git or a shared config repository.",
       manualVerifyTitle: "Restart and verify",
       manualVerifyDescription:
-        "Save the file and restart CodeX. If a request fails, verify the Consumer with /v1/models, then check base_url, wire_api, and the key in config.toml.",
+        "Save the file and restart Codex. If a request fails, verify the Consumer with /v1/models, then check base_url, wire_api, and the key in config.toml.",
       copyLabel: "Copy",
       copiedLabel: "Copied",
       automaticTitle: "Configure in the browser",
@@ -3067,21 +2420,21 @@ const integrationCopy: Record<
       selectConfigOnly: "Choose only the file named config.toml.",
       configInvalid:
         "config.toml could not be parsed or cannot be safely updated by this flow. The file was not changed and no Consumer was created.",
-      restartTitle: "Restart CodeX",
+      restartTitle: "Restart Codex",
       restartDescription:
-        "Only model_provider and model_providers.deepseek-lb are updated. All other TOML settings stay unchanged. Restart CodeX after the write completes.",
+        "Only model_provider and model_providers.deepseek-lb are updated. All other TOML settings stay unchanged. Restart Codex after the write completes.",
       configWritten:
-        "Your local CodeX configuration is updated. Restart CodeX to use it.",
+        "Your local Codex configuration is updated. Restart Codex to use it.",
       configError: "Configuration was not completed",
       configWriteFailed:
         "Could not complete configuration. Confirm file access was allowed and select .codex/config.toml from your home directory.",
       consumerCleanupFailed:
-        "config.toml could not be written and the new Consumer could not be deleted automatically. Delete the new Consumer named ChatGPT (CodeX) on the Consumers page.",
+        "config.toml could not be written and the new Consumer could not be deleted automatically. Delete the new Consumer named Codex on the Consumers page.",
       browserRequired: "Chrome or Edge is required",
       browserRequiredDescription:
         "This action requires browser access to local files. Open this page in the latest Chrome or Edge and try again.",
       fileName: "config.toml",
-      pickerDescription: "CodeX config.toml",
+      pickerDescription: "Codex config.toml",
       accept: { "application/toml": [".toml"] },
     },
     dsh: {
@@ -3357,7 +2710,9 @@ function FileIntegrationPage({
             aria-label={content.integration}
           >
             <TabsTrigger value="manual">{content.manualTitle}</TabsTrigger>
-            <TabsTrigger value="automatic">{content.automaticTitle}</TabsTrigger>
+            <TabsTrigger value="automatic">
+              {content.automaticTitle}
+            </TabsTrigger>
           </TabsList>
           <TabsContent value="manual" className="flex flex-col gap-5 pt-3">
             <p className="text-sm text-muted-foreground">
@@ -3555,7 +2910,9 @@ function DshIntegrationGuide({
             aria-label={content.integration}
           >
             <TabsTrigger value="manual">{content.manualTitle}</TabsTrigger>
-            <TabsTrigger value="automatic">{content.automaticTitle}</TabsTrigger>
+            <TabsTrigger value="automatic">
+              {content.automaticTitle}
+            </TabsTrigger>
           </TabsList>
           <TabsContent value="manual" className="flex flex-col gap-3 pt-3">
             <p className="text-sm text-muted-foreground">
@@ -3972,11 +3329,19 @@ function Dashboard({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
     ],
     [
       t.cacheRate,
-      cacheHitRate(data?.cached_tokens_24h ?? 0, data?.input_tokens_24h ?? 0, locale),
+      cacheHitRate(
+        data?.cached_tokens_24h ?? 0,
+        data?.input_tokens_24h ?? 0,
+        locale
+      ),
     ],
     [
       t.inputOutputRatio,
-      inputOutputRatio(data?.input_tokens_24h ?? 0, data?.output_tokens_24h ?? 0, locale),
+      inputOutputRatio(
+        data?.input_tokens_24h ?? 0,
+        data?.output_tokens_24h ?? 0,
+        locale
+      ),
     ],
   ]
   return (
@@ -4033,9 +3398,7 @@ function Dashboard({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
                 className="flex flex-col gap-1 bg-background p-4"
               >
                 <dt>{label}</dt>
-                <dd className="text-2xl font-semibold tabular-nums">
-                  {value}
-                </dd>
+                <dd className="text-2xl font-semibold tabular-nums">{value}</dd>
               </div>
             ))}
           </dl>
@@ -4163,7 +3526,11 @@ function TopupsPage({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
   const publicWalletUserId = summary.data.midas_fund_user_id ?? ""
   const amountUsdNanos = parseUsdNanos(amount)
   const amountInvalid = amount.length > 0 && amountUsdNanos === null
-  const canContinueToMidas = Boolean(summary.data.midas_configured && publicWalletUserId && amountUsdNanos !== null)
+  const canContinueToMidas = Boolean(
+    summary.data.midas_configured &&
+    publicWalletUserId &&
+    amountUsdNanos !== null
+  )
 
   const metrics = [
     [t.creditedUsd, summary.data.topup_usd_nanos],
@@ -4236,7 +3603,9 @@ function TopupsPage({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
                 <FieldDescription>{t.midasTransferRefresh}</FieldDescription>
               </Field>
               <Field data-invalid={amountInvalid}>
-                <FieldLabel htmlFor="midas-topup-amount">{t.topupAmount}</FieldLabel>
+                <FieldLabel htmlFor="midas-topup-amount">
+                  {t.topupAmount}
+                </FieldLabel>
                 <Input
                   id="midas-topup-amount"
                   inputMode="decimal"
@@ -4252,7 +3621,11 @@ function TopupsPage({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
               disabled={!canContinueToMidas}
               onClick={() => {
                 if (amountUsdNanos === null) return
-                window.open(midasTransferUrl(publicWalletUserId, amountUsdNanos), "_blank", "noopener,noreferrer")
+                window.open(
+                  midasTransferUrl(publicWalletUserId, amountUsdNanos),
+                  "_blank",
+                  "noopener,noreferrer"
+                )
               }}
             >
               <ExternalLinkIcon data-icon="inline-start" />
@@ -4348,7 +3721,7 @@ function SystemResourcesCard({
       icon: MemoryStickIcon,
       label: t.memory,
       value: `${formatStorageBytes(data.memory.used_bytes, locale)} / ${formatStorageBytes(data.memory.total_bytes, locale)}`,
-      detail: `${t.openaiLbRss}: ${formatStorageBytes(data.memory.process_used_bytes, locale)} · ${t.otherSystemMemory}: ${formatStorageBytes(data.memory.other_used_bytes, locale)} · ${t.systemAvailableMemory}: ${formatStorageBytes(data.memory.available_bytes, locale)}`,
+      detail: `${t.lbRss}: ${formatStorageBytes(data.memory.process_used_bytes, locale)} · ${t.otherSystemMemory}: ${formatStorageBytes(data.memory.other_used_bytes, locale)} · ${t.systemAvailableMemory}: ${formatStorageBytes(data.memory.available_bytes, locale)}`,
       secondaryDetail: `${t.swap}: ${formatStorageBytes(data.memory.swap_used_bytes, locale)} / ${formatStorageBytes(data.memory.swap_total_bytes, locale)}`,
       percent: data.memory.usage_percent,
     },
@@ -4609,8 +3982,7 @@ function Providers({
       await api(sdk, `/api/providers/${provider.id}`, {
         method: "PATCH",
         body: JSON.stringify({
-          visibility:
-            provider.visibility === "public" ? "private" : "public",
+          visibility: provider.visibility === "public" ? "private" : "public",
         }),
       })
       refreshProviders()
@@ -4685,7 +4057,9 @@ function Providers({
               title={t.noProviders}
               description={t.noProvidersDescription}
               action={
-                <Button onClick={() => setAddOpen(true)}>{t.addProvider}</Button>
+                <Button onClick={() => setAddOpen(true)}>
+                  {t.addProvider}
+                </Button>
               }
             />
           ) : (
@@ -4774,9 +4148,7 @@ function Providers({
                         <TableCell>
                           <div className="flex flex-col items-start gap-2">
                             <StatusBadge
-                              status={
-                                enabled ? provider.status : "disabled"
-                              }
+                              status={enabled ? provider.status : "disabled"}
                               locale={locale}
                             />
                             <Button
@@ -4800,10 +4172,7 @@ function Providers({
                                   : "outline"
                               }
                             >
-                              {providerVisibilityLabel(
-                                provider.visibility,
-                                t
-                              )}
+                              {providerVisibilityLabel(provider.visibility, t)}
                             </Badge>
                             <Button
                               size="sm"
@@ -4836,8 +4205,7 @@ function Providers({
                               </span>
                               <span>
                                 {t.providerUsageTokens}: {usage.input_tokens}/
-                                {usage.output_tokens}/
-                                {usage.cached_tokens}
+                                {usage.output_tokens}/{usage.cached_tokens}
                               </span>
                               <span className="text-muted-foreground">
                                 {t.providerUsageCost}:{" "}
@@ -4850,7 +4218,9 @@ function Providers({
                             </span>
                           )}
                         </TableCell>
-                        <TableCell>{formatTime(provider.last_used_at, locale)}</TableCell>
+                        <TableCell>
+                          {formatTime(provider.last_used_at, locale)}
+                        </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1">
                             <Button
@@ -4921,7 +4291,9 @@ function Providers({
       />
       <AlertDialog
         open={Boolean(deleteTarget)}
-        onOpenChange={(next) => !next && !deletePending && setDeleteTarget(null)}
+        onOpenChange={(next) =>
+          !next && !deletePending && setDeleteTarget(null)
+        }
       >
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -5209,10 +4581,7 @@ function ProviderTestDialog({
             rows={[
               [t.providerTestResult, t.providerTestSucceeded],
               [t.providerTestModel, state?.model || "—"],
-              [
-                t.providerTestLatency,
-                formatLatency(state?.latency_ms),
-              ],
+              [t.providerTestLatency, formatLatency(state?.latency_ms)],
             ]}
           />
         )}
@@ -5242,9 +4611,7 @@ function ProviderBalanceDialog({
           <DialogTitle>
             {t.providerBalanceTitle}: {state?.provider.name}
           </DialogTitle>
-          <DialogDescription>
-            {t.providerBalanceDescription}
-          </DialogDescription>
+          <DialogDescription>{t.providerBalanceDescription}</DialogDescription>
         </DialogHeader>
         {state?.status === "loading" ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -5410,9 +4777,13 @@ function Consumers({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
     if (rotateId) return
     setRotateId(id)
     try {
-      const value = await api<{ secret: string }>(sdk, `/api/consumers/${id}/rotate`, {
-        method: "POST",
-      })
+      const value = await api<{ secret: string }>(
+        sdk,
+        `/api/consumers/${id}/rotate`,
+        {
+          method: "POST",
+        }
+      )
       refreshConsumers()
       try {
         await navigator.clipboard.writeText(value.secret)
@@ -5684,9 +5055,7 @@ function Consumers({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
       </Dialog>
       <AlertDialog
         open={Boolean(rotateTarget)}
-        onOpenChange={(next) =>
-          !next && !rotateId && setRotateTarget(null)
-        }
+        onOpenChange={(next) => !next && !rotateId && setRotateTarget(null)}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -5817,10 +5186,7 @@ function UsagePage({
         accessorFn: (row) => usageDimensionLabel(row.values, dimension),
         header: fieldLabels[dimension],
         cell: ({ row }) => (
-          <UsageDimensionCell
-            dimension={dimension}
-            row={row.original.values}
-          />
+          <UsageDimensionCell dimension={dimension} row={row.original.values} />
         ),
       })
     )
@@ -6244,10 +5610,8 @@ function AuditPage({
     }
     return `/api/audit?${params}`
   }, [filters, page])
-  const { data, error, loading, refreshing, reload } = useApiQuery<AuditPageResponse>(
-    sdk,
-    query
-  )
+  const { data, error, loading, refreshing, reload } =
+    useApiQuery<AuditPageResponse>(sdk, query)
   const rows = data?.rows ?? []
   const total = data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
@@ -6441,9 +5805,7 @@ function AuditPage({
                     {rows.map((row) => (
                       <TableRow key={row.id}>
                         <TableCell>
-                          <LinkitUserInfo
-                            userId={row.user_id}
-                          />
+                          <LinkitUserInfo userId={row.user_id} />
                         </TableCell>
                         <TableCell className="font-medium">
                           {row.consumer_name}
@@ -6456,9 +5818,7 @@ function AuditPage({
                             <code>{row.model || "—"}</code>
                             <div className="flex flex-wrap gap-1">
                               <Badge
-                                variant={
-                                  row.peak ? "destructive" : "secondary"
-                                }
+                                variant={row.peak ? "destructive" : "secondary"}
                               >
                                 {row.peak ? t.pricingPeak : t.pricingOffPeak}
                               </Badge>
@@ -6860,7 +6220,10 @@ function RequestSummary({
             [labels.userId, data.user_id],
             [labels.provider, data.provider_name || data.provider_id || "—"],
             [labels.model, data.model || "—"],
-            [labels.pricingTariff, data.peak ? labels.pricingPeak : labels.pricingOffPeak],
+            [
+              labels.pricingTariff,
+              data.peak ? labels.pricingPeak : labels.pricingOffPeak,
+            ],
             [labels.reasoningEffort, data.reasoning_effort || "—"],
             [labels.upstreamHttpProtocol, data.upstream_http_version || "—"],
             [labels.httpStatusCode, data.status],
@@ -7098,7 +6461,9 @@ function HeaderComparison({
               <div className="flex items-center gap-2">
                 {leftLabel}
                 {!leftAvailable && (
-                  <Badge variant="outline">{labels.headerSnapshotMissing}</Badge>
+                  <Badge variant="outline">
+                    {labels.headerSnapshotMissing}
+                  </Badge>
                 )}
               </div>
             </TableHead>
@@ -7106,7 +6471,9 @@ function HeaderComparison({
               <div className="flex items-center gap-2">
                 {rightLabel}
                 {!rightAvailable && (
-                  <Badge variant="outline">{labels.headerSnapshotMissing}</Badge>
+                  <Badge variant="outline">
+                    {labels.headerSnapshotMissing}
+                  </Badge>
                 )}
               </div>
             </TableHead>
@@ -7289,9 +6656,7 @@ function UsersPage({
                 void updateRole(item.id, value as "admin" | "user")
               }
             >
-              <SelectTrigger
-                aria-label={`${t.role}: ${item.id}`}
-              >
+              <SelectTrigger aria-label={`${t.role}: ${item.id}`}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -7649,10 +7014,7 @@ function AvailableModelsSettings({
 
 function MidasSettings({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
   const t = copy[locale]
-  const query = useApiQuery<MidasSettingsData>(
-    sdk,
-    "/api/payments/settings"
-  )
+  const query = useApiQuery<MidasSettingsData>(sdk, "/api/payments/settings")
   const [settings, setSettings] = useState({
     midas_api_base: "",
     midas_fund_user_id: "",
@@ -7699,9 +7061,7 @@ function MidasSettings({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
         <form onSubmit={save}>
           <FieldGroup>
             <Field>
-              <FieldLabel htmlFor="midas-api-base">
-                {t.midasApiBase}
-              </FieldLabel>
+              <FieldLabel htmlFor="midas-api-base">{t.midasApiBase}</FieldLabel>
               <Input
                 id="midas-api-base"
                 type="url"
@@ -7962,9 +7322,7 @@ function AdminAuditPage({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
                   <TableRow key={row.id}>
                     <TableCell>{formatTime(row.created_at, locale)}</TableCell>
                     <TableCell>
-                      <LinkitUserInfo
-                        userId={row.admin_user_id}
-                      />
+                      <LinkitUserInfo userId={row.admin_user_id} />
                     </TableCell>
                     <TableCell>
                       <code>{row.action}</code>
@@ -7993,10 +7351,7 @@ type ProviderAuditChartPoint = {
   input_tokens: number
 }
 
-type ProviderAuditMetricKey =
-  | "failure_rate"
-  | "requests"
-  | "input_tokens"
+type ProviderAuditMetricKey = "failure_rate" | "requests" | "input_tokens"
 
 function ProviderAuditMetricChart({
   chartData,
@@ -8024,9 +7379,7 @@ function ProviderAuditMetricChart({
         <LineChart accessibilityLayer data={chartData}>
           <CartesianGrid vertical={false} />
           <ChartTooltip
-            labelFormatter={(value) =>
-              formatAuditHour(Number(value), locale)
-            }
+            labelFormatter={(value) => formatAuditHour(Number(value), locale)}
             formatter={(value) => [formatValue(Number(value)), label]}
             contentStyle={{
               backgroundColor: "var(--popover)",
@@ -8040,9 +7393,7 @@ function ProviderAuditMetricChart({
             axisLine={false}
             dataKey="hour_start"
             minTickGap={44}
-            tickFormatter={(value) =>
-              formatAuditHour(Number(value), locale)
-            }
+            tickFormatter={(value) => formatAuditHour(Number(value), locale)}
             tickLine={false}
             tickMargin={8}
           />
@@ -8343,7 +7694,11 @@ function ProviderAuditPage({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
                 <TableBody>
                   {filteredRows.map((row) => (
                     <TableRow
-                      key={[row.hour_start, row.provider_id ?? "unknown", row.model].join("-")}
+                      key={[
+                        row.hour_start,
+                        row.provider_id ?? "unknown",
+                        row.model,
+                      ].join("-")}
                     >
                       <TableCell className="tabular-nums">
                         {formatAuditHour(row.hour_start, locale)}
@@ -8711,7 +8066,11 @@ function cacheHitRate(
   })
 }
 
-function inputOutputRatio(inputTokens: number, outputTokens: number, locale: Locale) {
+function inputOutputRatio(
+  inputTokens: number,
+  outputTokens: number,
+  locale: Locale
+) {
   if (inputTokens <= 0 && outputTokens <= 0) return "—"
   if (outputTokens <= 0) return "∞:1"
   return `${(inputTokens / outputTokens).toLocaleString(locale, {
