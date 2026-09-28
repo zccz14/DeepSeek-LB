@@ -9,11 +9,14 @@ import {
   updateDshSettings,
 } from "../src/lib/dsh-config.ts"
 
-test("writes the NTNL OpenAI DSH provider without replacing other settings", () => {
+const origin = "https://deepseek.ntnl.io"
+
+test("writes the DeepSeek-LB DSH provider without replacing other settings", () => {
   const updated = updateDshSettings(
-    `# Keep this unrelated configuration.\napp:\n  color: purple\nllm-pi-ai:\n  providers:\n    existing:\n      api: other\n    ntnl-openai:\n      customSetting: keep\n`,
+    `# Keep this unrelated configuration.\napp:\n  color: purple\nllm-pi-ai:\n  providers:\n    existing:\n      api: other\n    deepseek-lb:\n      customSetting: keep\n`,
     "sk-example-token",
-    dshModels(["gpt-5.6-terra", "gpt-4o-transcribe"])
+    dshModels(["deepseek-flash", "deepseek-v4-pro"]),
+    origin
   )
   const settings = parse(updated) as {
     app: { color: string }
@@ -23,41 +26,46 @@ test("writes the NTNL OpenAI DSH provider without replacing other settings", () 
   assert.equal(settings.app.color, "purple")
   assert.match(updated, /Keep this unrelated configuration/u)
   assert.deepEqual(settings["llm-pi-ai"].providers.existing, { api: "other" })
-  assert.deepEqual(settings["llm-pi-ai"].providers["ntnl-openai"], {
+  assert.deepEqual(settings["llm-pi-ai"].providers["deepseek-lb"], {
     customSetting: "keep",
-    displayName: "NTNL OpenAI",
-    apiKeyEnv: "NTNL_OPENAI_API_KEY",
+    displayName: "DeepSeek-LB",
+    apiKeyEnv: "DEEPSEEK_LB_API_KEY",
     api: "openai-responses",
-    baseURL: "https://deepseek.ntnl.io/v1",
+    baseURL: `${origin}/v1`,
     models: [
-      { id: "gpt-5.6-terra", name: "GPT 5.6 Terra" },
-      { id: "gpt-4o-transcribe", name: "GPT 4o Transcribe" },
+      { id: "deepseek-flash", name: "Deepseek Flash" },
+      { id: "deepseek-v4-pro", name: "Deepseek V4 Pro" },
     ],
   })
 })
 
 test("writes the generated Consumer key into DSH credentials", () => {
   const updated = updateDshCredentials(
-    "OTHER_KEY: keep\nNTNL_OPENAI_API_KEY: sk-old\n",
+    "OTHER_KEY: keep\nDEEPSEEK_LB_API_KEY: sk-old\n",
     "sk-new-token"
   )
 
   assert.deepEqual(parse(updated), {
     OTHER_KEY: "keep",
-    NTNL_OPENAI_API_KEY: "sk-new-token",
+    DEEPSEEK_LB_API_KEY: "sk-new-token",
   })
 })
 
 test("rejects malformed YAML, unsafe structures, and invalid Consumer keys", () => {
   assert.throws(() =>
-    updateDshSettings("[", "sk-token", dshModels(["gpt-5.6-terra"]))
+    updateDshSettings("[", "sk-token", dshModels(["deepseek-flash"]), origin)
   )
   assert.throws(() =>
     updateDshSettings(
       "llm-pi-ai: invalid\n",
       "sk-token",
-      dshModels(["gpt-5.6-terra"])
+      dshModels(["deepseek-flash"]),
+      origin
     )
+  )
+  assert.throws(() =>
+    updateDshSettings("", "sk-token", [], origin),
+    /At least one DSH model/
   )
   assert.throws(() => updateDshCredentials("[]\n", "sk-token"))
   assert.throws(() => updateDshCredentials("", "not-a-token"))

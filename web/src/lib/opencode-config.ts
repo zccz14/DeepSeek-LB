@@ -4,19 +4,26 @@ import { isConsumerToken } from "./codex-config.ts"
 
 type JsonObject = Record<string, unknown>
 
+const providerId = "deepseek-lb"
+
 export function updateOpenCodeConfig(
   content: string,
   token: string,
-  origin: string
+  origin: string,
+  modelIds: string[]
 ) {
   if (!isConsumerToken(token)) {
     throw new Error(
       "Consumer token must start with sk- and contain no whitespace."
     )
   }
+  if (modelIds.length === 0) {
+    throw new Error("At least one model is required.")
+  }
 
   const document = parseDocument(content)
-  const provider = objectValue(objectValue(document.provider)["deepseek-lb"])
+  const provider = objectValue(objectValue(document.provider)[providerId])
+  const models = objectValue(provider.models)
   const nextProvider = {
     ...provider,
     npm: "@ai-sdk/openai-compatible",
@@ -26,16 +33,12 @@ export function updateOpenCodeConfig(
       baseURL: `${origin}/v1`,
       apiKey: token,
     },
-    models: {
-      ...objectValue(provider.models),
-      "gpt-5.4": {
-        ...objectValue(objectValue(provider.models)["gpt-5.4"]),
-        name: "gpt-5.4",
-      },
-    },
+    models: Object.fromEntries(
+      modelIds.map((id) => [id, { ...objectValue(models[id]), name: id }])
+    ),
   }
   const newline = content.includes("\r\n") ? "\r\n" : "\n"
-  const edits = modify(content, ["provider", "deepseek-lb"], nextProvider, {
+  const edits = modify(content, ["provider", providerId], nextProvider, {
     formattingOptions: { insertSpaces: true, tabSize: 2, eol: newline },
   })
 

@@ -55,22 +55,14 @@ import {
   ClipboardIcon,
   CpuIcon,
   DatabaseIcon,
-  DownloadIcon,
   ExternalLinkIcon,
-  FileAudioIcon,
-  GlobeIcon,
   HardDriveIcon,
-  ImageIcon,
   KeyRoundIcon,
   LanguagesIcon,
-  LockIcon,
-  LogInIcon,
   MemoryStickIcon,
-  MicIcon,
   NetworkIcon,
   PencilIcon,
   PlusIcon,
-  RadioIcon,
   RefreshCwIcon,
   ScrollTextIcon,
   ServerIcon,
@@ -78,12 +70,9 @@ import {
   ShieldAlertIcon,
   ShieldCheckIcon,
   SlidersHorizontalIcon,
-  SquareIcon,
   Trash2Icon,
   UserRoundCogIcon,
-  UploadIcon,
   WalletCardsIcon,
-  WorkflowIcon,
   XIcon,
   XCircleIcon,
   type LucideIcon,
@@ -91,14 +80,6 @@ import {
 import { toast } from "sonner"
 import { compareHeaderSnapshots } from "@/lib/header-comparison"
 import { formatAuditHour, formatPercent, type Locale } from "@/lib/format"
-import {
-  isModelDowngrade,
-  modelDowngradeFlows,
-  modelDowngradeRatePoints,
-  modelDowngradeSankey,
-  unknownProviderId,
-  type ModelDowngradeRow,
-} from "@/lib/model-downgrade-audit"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
@@ -121,8 +102,6 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { ChartContainer, type ChartConfig } from "@/components/ui/chart"
-import { ModelDowngradeRateChart } from "@/components/model-downgrade-rate-chart"
-import { ModelDowngradeSankey } from "@/components/model-downgrade-sankey"
 import {
   Dialog,
   DialogContent,
@@ -151,13 +130,6 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
 import {
   Select,
   SelectContent,
@@ -195,17 +167,13 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Toaster } from "@/components/ui/sonner"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import { ResponsesAPIRequestBodyRenderer } from "@/components/responses-api-request-body-renderer"
-import { api, apiForm, type AuthSdk } from "@/lib/api"
+import { api, type AuthSdk } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import {
   codexPlatform,
+  codexProviderBlock,
   isConsumerToken,
   updateCodexConfig,
   type CodexPlatform,
@@ -216,14 +184,7 @@ import {
   updateDshSettings,
 } from "@/lib/dsh-config"
 import { updateOpenCodeConfig } from "@/lib/opencode-config"
-import {
-  rateLimitResetExpiryStatus,
-  rateLimitResetTimestampSeconds,
-  sortRateLimitResetCreditsByExpiry,
-  type RateLimitResetTimestamp,
-} from "@/lib/rate-limit-reset-expiry"
 import { responseOutputText } from "@/lib/response-output"
-import { auditImageResponses } from "@/lib/audit-image-response"
 import {
   auditFilterSearch,
   auditFiltersFromSearch,
@@ -244,9 +205,6 @@ type Page =
   | "dsh-integration"
   | "opencode-integration"
   | "direct-api-integration"
-  | "transcriptions"
-  | "realtime"
-  | "images"
   | "usage"
   | "audit"
   | "topups"
@@ -254,7 +212,6 @@ type Page =
   | "system-resources"
   | "admin-audit"
   | "provider-audit"
-  | "model-downgrade-audit"
   | "request-detail"
   | "users"
   | "settings"
@@ -326,45 +283,36 @@ type Consumer = {
   created_at: number
   last_used_at?: number
   request_archive: boolean
-  intercept_degradation: boolean
   is_disabled: boolean
+}
+type ProviderUsageStats = {
+  requests: number
+  errors: number
+  peak_requests: number
+  input_tokens: number
+  output_tokens: number
+  cached_tokens: number
+  actual_cost_usd_nanos: number
 }
 type Provider = {
   id: string
   name: string
-  account_id: string
   owner_id?: string
   status: string
   manual_disabled: number
   cooldown_until?: number
-  rate_limit_json?: string
   last_error?: string
-  originator: ProviderOriginator
-  allow_other_originator: boolean
   visibility: ProviderVisibility
+  created_at: number
+  updated_at: number
+  last_used_at?: number
   inflight: number
   queued: number
   concurrency_limit: number
   official_provided_usd_nanos: number
   actual_provided_usd_nanos: number
-  updated_at: number
-  http_proxy_configured?: boolean
+  usage?: ProviderUsageStats | null
 }
-type ProviderProxyHealth = {
-  proxy_configured: boolean
-  lb_to_proxy_ms?: number
-  proxy_to_openai_ms?: number
-  location?: { ip?: string; city?: string; region?: string; country?: string; org?: string }
-  error?: string
-}
-type ProviderTokens = { access_key: string; refresh_key: string }
-type OAuthFlow = { state: string; authorize_url: string }
-// Client families a provider can be authorized as; the value is presented to OpenAI as the
-// `originator` and decides which downstream clients may use the provider.
-const providerOriginators = ["codex_cli_rs", "pi", "opencode"] as const
-type ProviderOriginator = (typeof providerOriginators)[number]
-
-// Who may route to a provider: every Consumer of this proxy, or only the owner's own Consumers.
 const providerVisibilities = ["private", "public"] as const
 type ProviderVisibility = (typeof providerVisibilities)[number]
 
@@ -380,98 +328,38 @@ function providerVisibilityLabel(
   }
 }
 
-function providerOriginatorLabel(
-  value: ProviderOriginator,
-  t: (typeof copy)[Locale]
-): string {
-  switch (value) {
-    case "pi":
-      return t.providerOriginatorPi
-    case "opencode":
-      return t.providerOriginatorOpencode
-    default:
-      return t.providerOriginatorCodex
-  }
-}
-type UsageWindow = {
-  used_percent?: number
-  reset_at?: number
-  reset_after_seconds?: number
-}
-type ProviderUsage = {
-  email?: string
-  account_email?: string
-  account?: { email?: string }
-  plan_type?: string
-  rate_limit?: { primary_window?: UsageWindow; secondary_window?: UsageWindow }
-  credits?: { balance?: number | string | null; unlimited?: boolean }
-  [key: string]: unknown
-}
-type ProviderUsageEntry = { usage?: ProviderUsage; error?: string }
-type ProviderUsageResponse = { providers: Record<string, ProviderUsageEntry> }
-type ProviderCapacityHistoryPoint = {
-  sampled_at: number
-  plus_equivalent_remaining_basis_points: number
-}
-type ProviderCapacity = {
-  provider_count: number
-  included_provider_count: number
-  plus_equivalent_remaining_basis_points: number
-  last_sampled_at?: number
-  history: ProviderCapacityHistoryPoint[]
-}
-type ProviderRateLimitResetCredit = {
-  id: string
-  reset_type?: string
-  status?: string
-  granted_at?: RateLimitResetTimestamp
-  expires_at?: RateLimitResetTimestamp
-  title?: string | null
-  description?: string | null
-}
-type ProviderRateLimitResets = {
-  available_count?: number
-  credits?: ProviderRateLimitResetCredit[] | null
-}
-type ProviderRateLimitResetEntry = {
-  resets?: ProviderRateLimitResets
-  error?: string
-}
-type ProviderRateLimitResetsResponse = {
-  providers: Record<string, ProviderRateLimitResetEntry>
-}
-type ProviderCircuitEvent = {
-  id: string
-  provider_id: string
-  cause: string
-  rate_limit_json: string
-  opened_at: number
-  cooldown_until: number
-  closed_at?: number
-  resolution?: string
-}
-type ProviderCircuitSummaryResponse = {
-  providers: Record<string, ProviderCircuitEvent>
-}
-type ProviderRateLimitResetResult = { code?: string }
-type ProviderRateLimitResetTarget = {
-  provider: Provider
-  credit?: ProviderRateLimitResetCredit
-  redeemRequestId: string
-}
-type ProviderTokenDialogState = {
-  provider: Provider
-  loading: boolean
-  tokens?: ProviderTokens
-  error?: string
+type ProviderBalance = {
+  is_available?: boolean | null
+  balance_infos?: Array<{
+    currency?: string
+    total_balance?: string
+    granted_balance?: string
+    topped_up_balance?: string
+  }> | null
 }
 type ProviderTestState = {
   provider: Provider
   status: "loading" | "success" | "error"
-  usage?: ProviderUsage
+  latency_ms?: number
+  model?: string
   error?: string
 }
-type ProviderProxyDialogState = { provider: Provider }
+type DashboardStats = {
+  active_consumers: number
+  active_providers: number
+  calls_24h: number
+  errors_24h: number
+  peak_calls_24h: number
+  input_tokens_24h: number
+  output_tokens_24h: number
+  cached_tokens_24h: number
+  official_cost_usd_nanos_24h: number
+  actual_cost_usd_nanos_24h: number
+  official_consumed_usd_nanos: number
+  consumed_usd_nanos: number
+  peak_now: boolean
+  available_model_ids: string[]
+}
 type UsagePeriod = "24h" | "7d"
 type UsageRow = {
   user_id: string
@@ -487,6 +375,7 @@ type UsageRow = {
   network_transport_bytes: number
   official_cost_usd_nanos: number
   actual_cost_usd_nanos: number
+  peak_requests: number
 }
 type UsageResponse = { period: UsagePeriod; since: number; rows: UsageRow[] }
 type PivotCell = Pick<
@@ -509,27 +398,20 @@ type Audit = {
   id: string
   request_id: string
   thread_id?: string
-  session_id?: string
   user_id: string
   consumer_name: string
   provider_id?: string
   provider_name?: string
   path: string
   model?: string
-  upstream_model?: string | null
-  downstream_user_agent?: string | null
-  downstream_originator?: string | null
-  upstream_originator?: string | null
-  originator_fallback_reason?: string | null
   reasoning_effort?: string
-  fast_mode: boolean
+  peak: boolean
   status: number
   first_byte_latency_ms?: number
   request_bytes: number
   response_bytes: number
   request_transport_bytes: number
   response_transport_bytes: number
-  codex_turn_state_length?: number | null
   latency_ms: number
   input_tokens: number
   output_tokens: number
@@ -591,6 +473,8 @@ type ProviderAuditRow = {
   successful_requests: number
   failed_requests: number
   input_tokens: number
+  actual_cost_usd_nanos: number
+  peak_requests: number
   success_rate: number
   failure_rate: number
 }
@@ -601,30 +485,20 @@ type ProviderAuditResponse = {
   rows: ProviderAuditRow[]
 }
 type SettingsData = {
+  role: Role
   auth_issuer?: string
+  auth_audience?: string
   upstream_base: string
-  upstream_openai_beta?: string
-  upstream_user_agent?: string | null
-  upstream_user_agents?: {
-    codex_cli_rs?: string | null
-    pi?: string | null
-    opencode?: string | null
-  }
-  experimental_filter_codex_turn_state_312?: boolean
-  image_host_model: string
   available_model_ids: string[]
   allow_all_users_debt: boolean
-  oauth_authorize_url: string
-  oauth_token_url: string
-  oauth_redirect_uri: string
-  oauth_client_id: string
   response_body_limit: number
-  image_body_limit: number
-  audio_body_limit: number
   affinity_ttl_seconds: number
   provider_concurrency_limit: number
   request_archive_retention_days: number
   model_price_multiplier: string
+  midas_api_base?: string
+  midas_fund_user_id?: string | null
+  midas_fund_api_key_configured?: boolean
 }
 type PaymentSummary = {
   topup_usd_nanos: number
@@ -642,15 +516,14 @@ type MidasSettingsData = {
   midas_fund_api_key_configured: boolean
 }
 type ModelPriceRates = {
-  input_usd_nanos: number
-  cached_input_usd_nanos?: number
-  cache_write_usd_nanos?: number
+  cache_hit_usd_nanos: number
+  cache_miss_usd_nanos: number
   output_usd_nanos: number
 }
 type ModelPrice = {
   model: string
-  short: ModelPriceRates
-  long?: ModelPriceRates
+  peak: ModelPriceRates
+  off_peak: ModelPriceRates
 }
 type ModelPricesResponse = {
   source_url: string
@@ -658,13 +531,6 @@ type ModelPricesResponse = {
   unit: string
   rows: ModelPrice[]
 }
-type ReferenceImage = {
-  id: string
-  name: string
-  size: number
-  dataUrl: string
-}
-
 const copy = {
   zh: {
     dashboard: "总览",
@@ -795,18 +661,29 @@ const copy = {
     midasConfigured: "已配置",
     midasNotConfigured: "未配置",
     midasSettingsSaved: "Midas 设置已保存",
-    modelPricesTitle: "模型官方价格",
+    modelPricesTitle: "DeepSeek 官方价格",
     modelPricesDescription:
-      "用于费用核算的 OpenAI 官方标准价格快照；仅显示当前允许调用且有 Token 标准价格的模型。",
+      "用于费用核算的 DeepSeek 官方价格快照，单位为美元/百万 Token；高峰与非高峰两档并列。",
     pricingUnit: "计价单位",
     pricingAsOf: "价格快照日期",
-    officialPricingSource: "打开 OpenAI 官方价格页",
-    officialModelPriceTable: "标准 Token 价格",
+    officialPricingSource: "打开 DeepSeek 官方价格页",
+    officialModelPriceTable: "Token 价格",
     modelPricesTableDescription:
-      "短上下文和长上下文分别列示；“—”表示官方未单列该价格。",
+      "按高峰（peak）与非高峰（off-peak）分别列示。非高峰为高峰价格的 50%，中国法定节假日全天按非高峰计费。",
     shortContext: "短上下文",
-    longContext: "长上下文（≥272K）",
+    longContext: "长上下文",
     cacheWrite: "缓存写入",
+    activeProviders: "可用上游提供商",
+    peakCalls24h: "峰时请求（24 小时）",
+    pricingTariffTitle: "当前计费时段",
+    pricingTariffDescription:
+      "DeepSeek 分高峰与非高峰两档计费：非高峰价格为高峰的 50%，中国法定节假日全天按非高峰计费。",
+    pricingPeak: "高峰",
+    pricingTariff: "计费时段",
+    pricingOffPeak: "非高峰",
+    pricingModels: "可用模型",
+    cacheHitTokens: "命中缓存",
+    cacheMissTokens: "未命中缓存",
     systemResources: "系统资源",
     systemResourcesDescription:
       "宿主机当前负载与 DeepSeek-LB 数据占用，仅 root 和管理员可见。",
@@ -841,9 +718,44 @@ const copy = {
     vacuumDatabaseDescription:
       "此操作会重写数据库文件以回收可回收空间。执行期间数据库写入可能短暂等待。",
     vacuumDatabaseComplete: "SQLite 数据库已整理，资源指标已刷新。",
-    providerPool: "OAuth 上游提供商池",
+    providerPool: "上游提供商池",
     providerDescription:
-      "管理自己拥有的 OAuth 上游提供商；root 与管理员可管理全局 Provider。Token 读取与变更仅对管理员开放，并会进入操作审计。",
+      "每个上游提供商就是一个 DeepSeek API Key。私有提供商只有你自己的 Consumer 可以使用，公开提供商对所有 Consumer 开放。",
+    providerApiKey: "DeepSeek API Key",
+    providerApiKeyHelp:
+      "DeepSeek 平台签发的 API Key，保存在本机 SQLite 中，只有 root 与管理员可以再次读取。",
+    providerApiKeyInvalid: "API Key 需要以 sk- 开头且不含空白字符。",
+    providerKeyTitle: "上游提供商 API Key",
+    providerKeyDescription:
+      "读取或替换该提供商的 DeepSeek API Key。更换后调度池会立即使用新 Key。",
+    providerKeySaved: "上游提供商 API Key 已保存",
+    saveProviderKey: "保存 API Key",
+    providerEnable: "启用",
+    providerDisable: "停用",
+    providerLastError: "最近错误",
+    providerCooldownUntil: "冷却至",
+    providerUsage7d: "近 7 天用量",
+    providerUsageRequests: "请求",
+    providerUsageErrors: "失败",
+    providerUsageTokens: "Token（输入 / 输出 / 命中缓存）",
+    providerUsageCost: "费用",
+    providerNoUsage: "近 7 天没有请求",
+    providerTestTitle: "上游连通性测试",
+    providerTestDescription:
+      "服务端使用该提供商的 API Key 向 DeepSeek 发送一次最小请求，Key 不会返回浏览器。",
+    providerTestResult: "结果",
+    providerTestSucceeded: "连通正常",
+    providerTestFailed: "上游返回错误",
+    providerTestModel: "测试模型",
+    providerTestLatency: "耗时",
+    providerBalance: "余额",
+    providerBalanceTitle: "上游余额",
+    providerBalanceDescription:
+      "直接读取 DeepSeek 账户余额；余额为 0 时该提供商会返回 402 并暂停调度。",
+    providerBalanceAvailable: "可继续调用",
+    providerBalanceUnavailable: "DeepSeek 未返回余额信息。",
+    yes: "是",
+    no: "否",
     addProvider: "添加上游提供商",
     noProviders: "尚无上游提供商",
     noProvidersDescription:
@@ -1223,6 +1135,8 @@ const copy = {
       "留空时 LB 不注入此请求头；客户端自行携带的同名头仍按透传规则处理。",
     bodyLimit: "请求体限制",
     affinityTtl: "亲和 TTL",
+    upstreamHint: "DeepSeek API 基址，默认 https://api.deepseek.com。",
+    archiveRetention: "请求与响应诊断记录保留天数",
     statusActive: "可用",
     statusCooldown: "冷却中",
     statusAuthError: "认证错误",
@@ -1478,7 +1392,7 @@ const copy = {
     pageOpenCodeIntegration:
       "Configure the local OpenCode file manually or in the browser with a dedicated downstream Consumer.",
     pageDirectApiIntegration:
-      "Call the OpenAI-compatible DeepSeek-LB API with a dedicated downstream Consumer.",
+      "Call the DeepSeek API through DeepSeek-LB with a dedicated downstream Consumer.",
     pageTranscriptions:
       "Record or upload audio, then transcribe it through a CodeX OAuth Provider available to the current user.",
     pageRealtime:
@@ -1569,18 +1483,29 @@ const copy = {
     midasConfigured: "Configured",
     midasNotConfigured: "Not configured",
     midasSettingsSaved: "Midas settings saved",
-    modelPricesTitle: "Official model prices",
+    modelPricesTitle: "Official DeepSeek prices",
     modelPricesDescription:
-      "Official OpenAI standard-pricing snapshot used for cost accounting. Only currently enabled models with standard token prices are shown.",
+      "The official DeepSeek price snapshot used for cost accounting, in USD per million tokens, with peak and off-peak rates side by side.",
     pricingUnit: "Unit",
     pricingAsOf: "Pricing snapshot date",
-    officialPricingSource: "Open official OpenAI pricing",
-    officialModelPriceTable: "Standard token pricing",
+    officialPricingSource: "Open official DeepSeek pricing",
+    officialModelPriceTable: "Token pricing",
     modelPricesTableDescription:
-      "Short- and long-context rates are shown separately; “—” means OpenAI does not list a separate rate.",
+      "Peak and off-peak rates are shown separately. Off-peak costs 50% of peak, and Chinese public holidays are billed off-peak all day.",
     shortContext: "Short context",
-    longContext: "Long context (≥272K)",
+    longContext: "Long context",
     cacheWrite: "Cache write",
+    activeProviders: "Active providers",
+    peakCalls24h: "Peak-hour requests (24h)",
+    pricingTariffTitle: "Current billing window",
+    pricingTariffDescription:
+      "DeepSeek bills two tariffs: off-peak costs 50% of peak, and Chinese public holidays are billed off-peak all day.",
+    pricingPeak: "Peak",
+    pricingTariff: "Billing window",
+    pricingOffPeak: "Off-peak",
+    pricingModels: "Available models",
+    cacheHitTokens: "Cache hit",
+    cacheMissTokens: "Cache miss",
     systemResources: "System resources",
     systemResourcesDescription:
       "Current host load and DeepSeek-LB data footprint. Visible to root and administrators only.",
@@ -1617,9 +1542,45 @@ const copy = {
       "This rewrites the database file to reclaim free space. Database writes may wait briefly while it runs.",
     vacuumDatabaseComplete:
       "SQLite database compacted and resource metrics refreshed.",
-    providerPool: "OAuth provider pool",
+    providerPool: "Provider pool",
     providerDescription:
-      "Manage OAuth providers you own. Root and administrators can manage the global pool. Token reads and changes are limited to administrators and audited.",
+      "Every provider is one DeepSeek API key. Private providers serve only your own Consumers; public providers serve every Consumer.",
+    providerApiKey: "DeepSeek API key",
+    providerApiKeyHelp:
+      "The API key issued by the DeepSeek platform. It is stored in the local SQLite database and can only be read again by root and administrators.",
+    providerApiKeyInvalid:
+      "The API key must start with sk- and contain no whitespace.",
+    providerKeyTitle: "Provider API key",
+    providerKeyDescription:
+      "Read or replace this provider's DeepSeek API key. The scheduler picks up the new key immediately.",
+    providerKeySaved: "Provider API key saved",
+    saveProviderKey: "Save API key",
+    providerEnable: "Enable",
+    providerDisable: "Disable",
+    providerLastError: "Last error",
+    providerCooldownUntil: "Cooling down until",
+    providerUsage7d: "Last 7 days",
+    providerUsageRequests: "Requests",
+    providerUsageErrors: "Failed",
+    providerUsageTokens: "Tokens (input / output / cached)",
+    providerUsageCost: "Cost",
+    providerNoUsage: "No requests in the last 7 days",
+    providerTestTitle: "Upstream connectivity test",
+    providerTestDescription:
+      "The server sends one minimal request to DeepSeek with this provider's API key. The key never reaches the browser.",
+    providerTestResult: "Result",
+    providerTestSucceeded: "Upstream reachable",
+    providerTestFailed: "Upstream returned an error",
+    providerTestModel: "Test model",
+    providerTestLatency: "Latency",
+    providerBalance: "Balance",
+    providerBalanceTitle: "Upstream balance",
+    providerBalanceDescription:
+      "Reads the DeepSeek account balance directly. A provider with no balance returns 402 and is parked.",
+    providerBalanceAvailable: "Can serve requests",
+    providerBalanceUnavailable: "DeepSeek did not return balance information.",
+    yes: "Yes",
+    no: "No",
     addProvider: "Add provider",
     noProviders: "No providers",
     noProvidersDescription:
@@ -2017,6 +1978,8 @@ const copy = {
       "When empty, LB does not inject this header. A same-named client header still follows the transparent forwarding policy.",
     bodyLimit: "Body limit",
     affinityTtl: "Affinity TTL",
+    upstreamHint: "DeepSeek API base URL; defaults to https://api.deepseek.com.",
+    archiveRetention: "Request and response diagnostic retention (days)",
     statusActive: "Available",
     statusCooldown: "Cooling down",
     statusAuthError: "Authentication error",
@@ -2547,7 +2510,6 @@ function Console({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
       "system-resources",
       "admin-audit",
       "provider-audit",
-      "model-downgrade-audit",
     ].includes(requestedPage) && !isAdministrator
       ? "dashboard"
       : requestedPage
@@ -2571,14 +2533,6 @@ function Console({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
       ],
     },
     {
-      label: t.navigationTools,
-      items: [
-        ["transcriptions", FileAudioIcon],
-        ["realtime", RadioIcon],
-        ["images", ImageIcon],
-      ],
-    },
-    {
       label: t.navigationData,
       items: [
         ["usage", ActivityIcon],
@@ -2595,7 +2549,6 @@ function Console({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
               ["users", UserRoundCogIcon],
               ["admin-audit", ShieldCheckIcon],
               ["provider-audit", ActivityIcon],
-              ["model-downgrade-audit", WorkflowIcon],
             ],
           } satisfies NavigationGroup,
         ]
@@ -2706,18 +2659,6 @@ function Console({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
                 element={<DirectApiIntegrationPage locale={locale} />}
               />
               <Route
-                path="/transcriptions"
-                element={<TranscriptionsPage sdk={sdk} locale={locale} />}
-              />
-              <Route
-                path="/realtime"
-                element={<RealtimeVoicePage sdk={sdk} locale={locale} />}
-              />
-              <Route
-                path="/images"
-                element={<ImageGenerationPage sdk={sdk} locale={locale} />}
-              />
-              <Route
                 path="/usage"
                 element={<UsagePage sdk={sdk} locale={locale} user={user} />}
               />
@@ -2773,16 +2714,6 @@ function Console({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
                 element={
                   isAdministrator ? (
                     <ProviderAuditPage sdk={sdk} locale={locale} />
-                  ) : (
-                    <Navigate replace to="/dashboard" />
-                  )
-                }
-              />
-              <Route
-                path="/model-downgrade-audit"
-                element={
-                  isAdministrator ? (
-                    <ModelDowngradeAuditPage sdk={sdk} locale={locale} />
                   ) : (
                     <Navigate replace to="/dashboard" />
                   )
@@ -2923,7 +2854,7 @@ const integrationCopy: Record<
       manualDescription:
         "编辑用户级 ~/.codex/config.toml，将 DeepSeek-LB 设为 CodeX 的模型提供方。",
       manualConfigInstruction:
-        "将以下内容合并到 ~/.codex/config.toml；如果已有其他设置，只更新 model_provider 与 model_providers.ntnl-openai。",
+        "将以下内容合并到 ~/.codex/config.toml；如果已有其他设置，只更新 model_provider 与 model_providers.deepseek-lb。",
       manualTokenInstruction:
         "将 <YOUR_CONSUMER_KEY> 替换为“下游消费者”页面创建的 Consumer 密钥。不要把真实密钥提交到 Git 或共享配置仓库。",
       manualVerifyTitle: "重启并验证",
@@ -2960,7 +2891,7 @@ const integrationCopy: Record<
         "config.toml 无法解析或包含当前流程无法安全更新的配置。文件未修改，也没有创建 Consumer。",
       restartTitle: "重启 CodeX",
       restartDescription:
-        "页面只会更新 model_provider 与 model_providers.ntnl-openai；其他 TOML 配置保持不变。写入完成后重启 CodeX。",
+        "页面只会更新 model_provider 与 model_providers.deepseek-lb；其他 TOML 配置保持不变。写入完成后重启 CodeX。",
       configWritten: "已写入本机 CodeX 配置；请重启 CodeX。",
       configError: "配置未完成",
       configWriteFailed:
@@ -2978,7 +2909,7 @@ const integrationCopy: Record<
       integration: "DSH（DeepSeek Harness）",
       consumerName: "DSH (DeepSeek Harness)",
       description:
-        "手动添加 NTNL OpenAI Provider，或授权浏览器读取和更新 ~/.dsh 中的 YAML 配置。自动流程会创建一个专用 Consumer，并只把密钥写入本机凭据文件。",
+        "手动添加 DeepSeek-LB Provider，或授权浏览器读取和更新 ~/.dsh 中的 YAML 配置。自动流程会创建一个专用 Consumer，并只把密钥写入本机凭据文件。",
       preparationTitle: "专用 Consumer",
       preparationDescription:
         "先在“下游消费者”中为 DSH 创建独立 Consumer 并保存只展示一次的密钥。手动配置需要粘贴该密钥；自动配置只会把新密钥写入你授权的 ~/.dsh/.credentials.yaml。",
@@ -3004,7 +2935,7 @@ const integrationCopy: Record<
       configWriteFailed:
         "无法完成配置。请确认已授权目录访问，并选择用户目录下的 ~/.dsh。",
       configRollbackFailed:
-        "写入 .credentials.yaml 失败，且无法恢复 settings.yaml。请检查 ~/.dsh 中的 NTNL OpenAI 配置后再重试。",
+        "写入 .credentials.yaml 失败，且无法恢复 settings.yaml。请检查 ~/.dsh 中的 DeepSeek-LB 配置后再重试。",
       consumerCleanupFailed:
         "无法完成配置，且自动撤销新建 Consumer 失败。请在“下游消费者”中撤销名称为 DSH (DeepSeek Harness) 的新记录。",
       browserRequiredDescription:
@@ -3020,14 +2951,14 @@ const integrationCopy: Record<
         "先在“下游消费者”中为 OpenCode 创建独立 Consumer 并保存只展示一次的密钥。手动配置需要把密钥粘贴到 JSONC 文件；自动配置只会把新密钥写入你已授权的本地文件。",
       manualTitle: "手动配置",
       manualDescription:
-        "编辑用户级 ~/.config/opencode/opencode.jsonc，将 DeepSeek-LB 添加为 OpenAI-compatible Provider。",
+        "编辑用户级 ~/.config/opencode/opencode.jsonc，将 DeepSeek-LB 添加为 OpenAI 兼容 Provider。",
       manualConfigInstruction:
         "将以下 provider.deepseek-lb 片段合并到 ~/.config/opencode/opencode.jsonc，并把示例模型替换为 /v1/models 返回的可用 model id。",
       manualTokenInstruction:
         "将 <YOUR_CONSUMER_KEY> 替换为“下游消费者”页面创建的 Consumer 密钥。不要把真实密钥提交到 Git 或共享配置仓库。",
       manualVerifyTitle: "重启并验证",
       manualVerifyDescription:
-        "保存配置后重启 OpenCode，并选择 deepseek-lb/gpt-5.4（或模型目录中的其他可用模型）。若请求失败，先用 /v1/models 验证 Consumer 和 baseURL。",
+        "保存配置后重启 OpenCode，并选择 deepseek-lb/deepseek-flash（或模型目录中的其他可用模型）。若请求失败，先用 /v1/models 验证 Consumer 和 baseURL。",
       copyLabel: "复制",
       copiedLabel: "已复制",
       automaticTitle: "浏览器自动配置",
@@ -3101,7 +3032,7 @@ const integrationCopy: Record<
       manualDescription:
         "Edit the user-level ~/.codex/config.toml and point CodeX at DeepSeek-LB.",
       manualConfigInstruction:
-        "Merge this into ~/.codex/config.toml. If other settings already exist, update only model_provider and model_providers.ntnl-openai.",
+        "Merge this into ~/.codex/config.toml. If other settings already exist, update only model_provider and model_providers.deepseek-lb.",
       manualTokenInstruction:
         "Replace <YOUR_CONSUMER_KEY> with the Consumer secret created on the Consumers page. Never commit a real secret to Git or a shared config repository.",
       manualVerifyTitle: "Restart and verify",
@@ -3138,7 +3069,7 @@ const integrationCopy: Record<
         "config.toml could not be parsed or cannot be safely updated by this flow. The file was not changed and no Consumer was created.",
       restartTitle: "Restart CodeX",
       restartDescription:
-        "Only model_provider and model_providers.ntnl-openai are updated. All other TOML settings stay unchanged. Restart CodeX after the write completes.",
+        "Only model_provider and model_providers.deepseek-lb are updated. All other TOML settings stay unchanged. Restart CodeX after the write completes.",
       configWritten:
         "Your local CodeX configuration is updated. Restart CodeX to use it.",
       configError: "Configuration was not completed",
@@ -3157,7 +3088,7 @@ const integrationCopy: Record<
       integration: "DSH (DeepSeek Harness)",
       consumerName: "DSH (DeepSeek Harness)",
       description:
-        "Add an NTNL OpenAI Provider manually or authorize the browser to read and update the YAML configuration in ~/.dsh. The automatic flow creates a dedicated Consumer and writes its secret only to the local credentials file.",
+        "Add a DeepSeek-LB provider manually or authorize the browser to read and update the YAML configuration in ~/.dsh. The automatic flow creates a dedicated Consumer and writes its secret only to the local credentials file.",
       preparationTitle: "Dedicated Consumer",
       preparationDescription:
         "First create a dedicated Consumer for DSH on the Consumers page and save its one-time secret. Manual setup pastes that secret; automatic setup writes the new secret only to the ~/.dsh/.credentials.yaml file you authorize.",
@@ -3185,7 +3116,7 @@ const integrationCopy: Record<
       configWriteFailed:
         "Could not complete configuration. Confirm directory access was allowed and choose ~/.dsh from your home directory.",
       configRollbackFailed:
-        "Writing .credentials.yaml failed and settings.yaml could not be restored. Check the NTNL OpenAI configuration in ~/.dsh before retrying.",
+        "Writing .credentials.yaml failed and settings.yaml could not be restored. Check the DeepSeek-LB configuration in ~/.dsh before retrying.",
       consumerCleanupFailed:
         "Configuration could not be completed and the new Consumer could not be deleted automatically. Delete the Consumer named DSH (DeepSeek Harness) on the Consumers page.",
       browserRequiredDescription:
@@ -3208,7 +3139,7 @@ const integrationCopy: Record<
         "Replace <YOUR_CONSUMER_KEY> with the Consumer secret created on the Consumers page. Never commit a real secret to Git or a shared config repository.",
       manualVerifyTitle: "Restart and verify",
       manualVerifyDescription:
-        "Save the file, restart OpenCode, and choose deepseek-lb/gpt-5.4 (or another available model). If a request fails, verify the Consumer and baseURL with /v1/models.",
+        "Save the file, restart OpenCode, and choose deepseek-lb/deepseek-flash (or another available model). If a request fails, verify the Consumer and baseURL with /v1/models.",
       copyLabel: "Copy",
       copiedLabel: "Copied",
       automaticTitle: "Configure in the browser",
@@ -3261,10 +3192,10 @@ const integrationCopy: Record<
         "Create a dedicated Consumer for direct API calls on the Consumers page and save its one-time secret immediately. The examples below use <YOUR_CONSUMER_KEY> for that secret.",
       title: "Direct API calls",
       description:
-        "DeepSeek-LB proxies OpenAI-compatible /v1 endpoints. Authenticate the endpoint you need with a Bearer Consumer secret; no local configuration file is edited.",
+        "DeepSeek-LB proxies the DeepSeek OpenAI-compatible API under /v1. Authenticate with a Bearer Consumer secret; no local configuration file is edited.",
       firstStep: "First confirm the model list the service exposes.",
       secondStep:
-        "Then call the Responses API; image and audio endpoints are also available.",
+        "Then run a chat completion; clients such as Codex use the proxied /v1/responses endpoint.",
       modelPlaceholder: "replace with an available model ID",
       sensitiveTitle: "Key handling and troubleshooting",
       sensitiveDescription:
@@ -3306,6 +3237,7 @@ type DirectoryPickerWindow = Window & {
 }
 
 type FileIntegrationConfig = {
+  modelIds: string[]
   updateConfig: (content: string, token: string) => string
   manualConfig: (origin: string) => string
 }
@@ -3318,21 +3250,18 @@ function CodexIntegrationPage({
   locale: Locale
 }) {
   const content = integrationCopy[locale].codex
+  const origin = window.location.origin
 
   return (
     <FileIntegrationPage
       sdk={sdk}
       content={content}
       config={{
-        updateConfig: updateCodexConfig,
-        manualConfig: (origin) => `model_provider = "ntnl-openai"
-
-[model_providers.ntnl-openai]
-name = "NTNL OpenAI"
-base_url = "${origin}/v1"
-experimental_bearer_token = "<YOUR_CONSUMER_KEY>"
-wire_api = "responses"
-`,
+        modelIds: [],
+        updateConfig: (config, token) =>
+          updateCodexConfig(config, token, origin),
+        manualConfig: (manualOrigin) =>
+          codexProviderBlock(manualOrigin, "<YOUR_CONSUMER_KEY>"),
       }}
     />
   )
@@ -3347,14 +3276,17 @@ function OpenCodeIntegrationPage({
 }) {
   const content = integrationCopy[locale].opencode
   const origin = window.location.origin
+  const { data: settings } = useApiQuery<SettingsData>(sdk, "/api/settings")
+  const modelIds = settings?.available_model_ids ?? []
 
   return (
     <FileIntegrationPage
       sdk={sdk}
       content={content}
       config={{
+        modelIds,
         updateConfig: (config, token) =>
-          updateOpenCodeConfig(config, token, origin),
+          updateOpenCodeConfig(config, token, origin, modelIds),
         manualConfig: (configOrigin) => `{
   "$schema": "https://opencode.ai/config.json",
   "provider": {
@@ -3366,7 +3298,7 @@ function OpenCodeIntegrationPage({
         "apiKey": "<YOUR_CONSUMER_KEY>"
       },
       "models": {
-        "gpt-5.4": { "name": "gpt-5.4" }
+${modelIds.map((model) => `        "${model}": { "name": "${model}" }`).join(",\n")}
       }
     }
   }
@@ -3601,8 +3533,8 @@ function DshIntegrationGuide({
   modelListError: string
 }) {
   const providerFields = [
-    ["Provider ID", "ntnl-openai"],
-    ["API URL", "https://deepseek.ntnl.io/v1"],
+    ["Provider ID", "deepseek-lb"],
+    ["API URL", `${window.location.origin}/v1`],
     ["API protocol", "openai-responses"],
   ]
 
@@ -3731,7 +3663,12 @@ function DshConfigWriter({
 
       settingsSource = await readConfigFile(settingsHandle)
       try {
-        updateDshSettings(settingsSource, "sk-pending", dshModels(modelIds))
+        updateDshSettings(
+          settingsSource,
+          "sk-pending",
+          dshModels(modelIds),
+          window.location.origin
+        )
         try {
           credentialsHandle = await directory.getFileHandle(".credentials.yaml")
           credentialsSource = await readConfigFile(credentialsHandle)
@@ -3772,7 +3709,12 @@ function DshConfigWriter({
 
       await writeConfigFile(
         settingsHandle,
-        updateDshSettings(settingsSource, consumer.secret, dshModels(modelIds))
+        updateDshSettings(
+          settingsSource,
+          consumer.secret,
+          dshModels(modelIds),
+          window.location.origin
+        )
       )
       settingsWritten = true
       await writeConfigFile(
@@ -3881,11 +3823,11 @@ function DirectApiIntegrationPage({ locale }: { locale: Locale }) {
   const listModels =
     "curl " +
     origin +
-    '/v1/models \\\n  -H "Authorization: Bearer <YOUR_CONSUMER_KEY>" \\\n  -H "session-id: <STABLE_SESSION_ID>"'
-  const responses =
+    '/v1/models \\\n  -H "Authorization: Bearer <YOUR_CONSUMER_KEY>"'
+  const chat =
     "curl " +
     origin +
-    '/v1/responses \\\n  -H "Authorization: Bearer <YOUR_CONSUMER_KEY>" \\\n  -H "session-id: <STABLE_SESSION_ID>" \\\n  -H "Content-Type: application/json" \\\n  -d \'{\n    "model": "gpt-5.4",\n    "input": "Explain this Rust error"\n  }\''
+    '/v1/chat/completions \\\n  -H "Authorization: Bearer <YOUR_CONSUMER_KEY>" \\\n  -H "Content-Type: application/json" \\\n  -d \'{\n    "model": "deepseek-flash",\n    "messages": [{"role": "user", "content": "Explain this Rust error"}]\n  }\''
 
   return (
     <div className="flex max-w-4xl flex-col gap-5">
@@ -3904,12 +3846,13 @@ function DirectApiIntegrationPage({ locale }: { locale: Locale }) {
         </IntegrationStep>
         <IntegrationStep number={2} description={content.secondStep}>
           <CopyableCode
-            code={responses}
+            code={chat}
             copyLabel={copyLabel}
             copiedLabel={copiedLabel}
           />
           <p className="text-xs text-muted-foreground">
-            {content.modelPlaceholder}: <code>gpt-5.4</code>
+            {content.modelPlaceholder}: <code>deepseek-flash</code>,{" "}
+            <code>deepseek-v4-pro</code>
           </p>
         </IntegrationStep>
       </IntegrationPanel>
@@ -3997,7 +3940,7 @@ function CopyableCode({
 
 function Dashboard({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
   const t = copy[locale]
-  const { data, error, loading } = useApiQuery<Record<string, number>>(
+  const { data, error, loading } = useApiQuery<DashboardStats>(
     sdk,
     "/api/dashboard"
   )
@@ -4005,7 +3948,9 @@ function Dashboard({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
   if (error) return <ErrorState message={error} />
   const rows = [
     [t.activeConsumers, data?.active_consumers],
+    [t.activeProviders, data?.active_providers],
     [t.calls24h, data?.calls_24h],
+    [t.peakCalls24h, data?.peak_calls_24h],
     [t.errors24h, data?.errors_24h],
     [t.officialCost24h, formatUsd(data?.official_cost_usd_nanos_24h, locale)],
     [t.actualCost24h, formatUsd(data?.actual_cost_usd_nanos_24h, locale)],
@@ -4036,7 +3981,25 @@ function Dashboard({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
   ]
   return (
     <div className="flex flex-col gap-5">
-      <PlatformCapacity sdk={sdk} locale={locale} />
+      <Card>
+        <CardHeader className="flex-row items-start justify-between">
+          <div>
+            <CardTitle>{t.pricingTariffTitle}</CardTitle>
+            <CardDescription>{t.pricingTariffDescription}</CardDescription>
+          </div>
+          <Badge variant={data?.peak_now ? "destructive" : "secondary"}>
+            {data?.peak_now ? t.pricingPeak : t.pricingOffPeak}
+          </Badge>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+          <span>{t.pricingModels}:</span>
+          {(data?.available_model_ids ?? []).map((model) => (
+            <Badge key={model} variant="outline">
+              {model}
+            </Badge>
+          ))}
+        </CardContent>
+      </Card>
       <Card>
         <CardHeader>
           <CardTitle>{t.accountOverview}</CardTitle>
@@ -4127,24 +4090,27 @@ function ModelPricesPage({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
               <TableHeader>
                 <TableRow>
                   <TableHead rowSpan={2}>{t.model}</TableHead>
-                  <TableHead className="text-center" colSpan={4}>
-                    {t.shortContext}
+                  <TableHead className="text-center" colSpan={3}>
+                    {t.pricingPeak}
                   </TableHead>
-                  <TableHead className="text-center" colSpan={4}>
-                    {t.longContext}
+                  <TableHead className="text-center" colSpan={3}>
+                    {t.pricingOffPeak}
                   </TableHead>
                 </TableRow>
                 <TableRow>
-                  {[t.input, t.cachedInput, t.cacheWrite, t.output].map(
+                  {[t.cacheHitTokens, t.cacheMissTokens, t.output].map(
                     (label) => (
-                      <TableHead className="text-right" key={`short-${label}`}>
+                      <TableHead className="text-right" key={`peak-${label}`}>
                         {label}
                       </TableHead>
                     )
                   )}
-                  {[t.input, t.cachedInput, t.cacheWrite, t.output].map(
+                  {[t.cacheHitTokens, t.cacheMissTokens, t.output].map(
                     (label) => (
-                      <TableHead className="text-right" key={`long-${label}`}>
+                      <TableHead
+                        className="text-right"
+                        key={`off-peak-${label}`}
+                      >
                         {label}
                       </TableHead>
                     )
@@ -4158,28 +4124,22 @@ function ModelPricesPage({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
                       <code>{price.model}</code>
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {rate(price.short.input_usd_nanos)}
+                      {rate(price.peak.cache_hit_usd_nanos)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {rate(price.short.cached_input_usd_nanos)}
+                      {rate(price.peak.cache_miss_usd_nanos)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {rate(price.short.cache_write_usd_nanos)}
+                      {rate(price.peak.output_usd_nanos)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {rate(price.short.output_usd_nanos)}
+                      {rate(price.off_peak.cache_hit_usd_nanos)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {rate(price.long?.input_usd_nanos)}
+                      {rate(price.off_peak.cache_miss_usd_nanos)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {rate(price.long?.cached_input_usd_nanos)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {rate(price.long?.cache_write_usd_nanos)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {rate(price.long?.output_usd_nanos)}
+                      {rate(price.off_peak.output_usd_nanos)}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -4528,841 +4488,11 @@ function SystemResourcesLoading({ locale }: { locale: Locale }) {
   )
 }
 
-function TranscriptionsPage({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
-  const t = copy[locale]
-  const [audio, setAudio] = useState<File | null>(null)
-  const [language, setLanguage] = useState("auto")
-  const [transcript, setTranscript] = useState("")
-  const [pending, setPending] = useState(false)
-  const [recording, setRecording] = useState(false)
-  const recorder = useRef<MediaRecorder | null>(null)
-  const stream = useRef<MediaStream | null>(null)
-  const chunks = useRef<Blob[]>([])
-
-  useEffect(
-    () => () => {
-      if (recorder.current?.state !== "inactive") recorder.current?.stop()
-      stream.current?.getTracks().forEach((track) => track.stop())
-    },
-    []
-  )
-
-  function selectAudio(file: File | null) {
-    setAudio(file)
-    setTranscript("")
-  }
-
-  async function startRecording() {
-    if (!navigator.mediaDevices || !window.MediaRecorder) {
-      toast.error(t.microphoneUnavailable)
-      return
-    }
-    try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-      })
-      stream.current = mediaStream
-      chunks.current = []
-      const next = new MediaRecorder(mediaStream)
-      next.ondataavailable = (event) => {
-        if (event.data.size > 0) chunks.current.push(event.data)
-      }
-      next.onstop = () => {
-        const type = next.mimeType || "audio/webm"
-        selectAudio(new File(chunks.current, "recording.webm", { type }))
-        mediaStream.getTracks().forEach((track) => track.stop())
-        stream.current = null
-        recorder.current = null
-        setRecording(false)
-      }
-      recorder.current = next
-      next.start()
-      setRecording(true)
-    } catch {
-      toast.error(t.microphoneDenied)
-    }
-  }
-
-  function stopRecording() {
-    recorder.current?.stop()
-  }
-
-  async function transcribe() {
-    if (!audio) {
-      toast.error(t.noAudioSelected)
-      return
-    }
-    setPending(true)
-    try {
-      const form = new FormData()
-      form.set("file", audio)
-      if (language !== "auto") form.set("language", language)
-      const response = await apiForm<{ text: string }>(
-        sdk,
-        "/api/transcriptions",
-        form
-      )
-      setTranscript(response.text)
-    } catch (error) {
-      toast.error(message(error, t))
-    } finally {
-      setPending(false)
-    }
-  }
-
-  return (
-    <div className="grid max-w-5xl gap-5">
-      <Card>
-        <CardHeader>
-          <CardTitle>{t.transcriptionInput}</CardTitle>
-          <CardDescription className="flex flex-wrap items-center gap-2">
-            <span>{t.transcriptionInputHelp}</span>
-            <Badge variant="secondary">
-              {t.transcriptionModel}: <code>{t.transcriptionModelId}</code>
-            </Badge>
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_15rem]">
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor="transcription-file">
-                {t.selectAudio}
-              </FieldLabel>
-              <Input
-                id="transcription-file"
-                type="file"
-                accept="audio/*,.m4a,.webm,.wav,.mp3,.ogg,.flac"
-                onChange={(event) =>
-                  selectAudio(event.target.files?.[0] ?? null)
-                }
-              />
-              <FieldDescription>
-                {audio
-                  ? `${audio.name} · ${formatStorageBytes(audio.size, locale)}`
-                  : t.transcriptEmpty}
-              </FieldDescription>
-            </Field>
-            <div className="flex flex-wrap items-center gap-2">
-              {recording ? (
-                <Button variant="destructive" onClick={stopRecording}>
-                  <SquareIcon data-icon="inline-start" />
-                  {t.stopRecording}
-                </Button>
-              ) : (
-                <Button
-                  variant="secondary"
-                  onClick={() => void startRecording()}
-                >
-                  <MicIcon data-icon="inline-start" />
-                  {t.startRecording}
-                </Button>
-              )}
-              {recording && <Badge variant="outline">{t.recording}</Badge>}
-            </div>
-          </FieldGroup>
-          <Field>
-            <FieldLabel htmlFor="transcription-language">
-              {t.languageHint}
-            </FieldLabel>
-            <Select
-              value={language}
-              onValueChange={(value) => value && setLanguage(value)}
-            >
-              <SelectTrigger id="transcription-language">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectItem value="auto">{t.languageAuto}</SelectItem>
-                  <SelectItem value="zh">{t.languageChinese}</SelectItem>
-                  <SelectItem value="en">{t.languageEnglish}</SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </Field>
-        </CardContent>
-        <CardContent className="border-t pt-5">
-          <Button
-            disabled={!audio || recording || pending}
-            onClick={() => void transcribe()}
-          >
-            {pending ? (
-              <Spinner data-icon="inline-start" />
-            ) : (
-              <UploadIcon data-icon="inline-start" />
-            )}
-            {pending ? t.transcribing : t.transcribe}
-          </Button>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="flex-row items-center justify-between gap-4">
-          <div className="grid gap-1">
-            <CardTitle>{t.transcript}</CardTitle>
-            <CardDescription>{t.transcriptEmpty}</CardDescription>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={!transcript}
-            onClick={() =>
-              void navigator.clipboard
-                .writeText(transcript)
-                .then(() => toast.success(t.copied))
-            }
-          >
-            <ClipboardIcon data-icon="inline-start" />
-            {t.copyTranscript}
-          </Button>
-        </CardHeader>
-        <CardContent>
-          <textarea
-            aria-label={t.transcript}
-            className="min-h-48 w-full resize-y rounded-md border bg-background px-3 py-2 text-sm leading-6 outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-            placeholder={t.transcriptEmpty}
-            readOnly
-            value={transcript}
-          />
-        </CardContent>
-      </Card>
-    </div>
-  )
-}
-
-type RealtimeSession = {
-  stream: MediaStream
-  peer: RTCPeerConnection
-  socket: WebSocket
-  output: HTMLAudioElement
-}
-
-type RealtimeCall = {
-  sdp: string
-  call_id: string
-  sideband_token: string
-}
-
-function RealtimeVoicePage({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
-  const t = copy[locale]
-  const [instructions, setInstructions] = useState(
-    locale === "zh"
-      ? "你是简洁、自然的中文语音助手。先倾听，再用清晰的短句回答。"
-      : "You are a concise, natural voice assistant. Listen first, then answer in clear, short sentences."
-  )
-  const [status, setStatus] = useState<"idle" | "connecting" | "live" | "error">(
-    "idle"
-  )
-  const [transcript, setTranscript] = useState("")
-  const [error, setError] = useState("")
-  const activeSession = useRef<RealtimeSession | null>(null)
-
-  function stopSession(nextStatus: "idle" | "error" = "idle") {
-    const session = activeSession.current
-    activeSession.current = null
-    session?.socket.close()
-    session?.peer.close()
-    session?.stream.getTracks().forEach((track) => track.stop())
-    if (session?.output.srcObject) {
-      session.output.pause()
-      session.output.srcObject = null
-    }
-    setStatus(nextStatus)
-  }
-
-  useEffect(() => () => stopSession(), [])
-
-  function appendTranscript(payload: unknown) {
-    if (!payload || typeof payload !== "object") return
-    const event = payload as { type?: unknown; delta?: unknown; text?: unknown }
-    const type = typeof event.type === "string" ? event.type : ""
-    const delta = typeof event.delta === "string" ? event.delta : event.text
-    if (!type.includes("transcript") || typeof delta !== "string" || !delta) return
-    setTranscript((current) => `${current}${delta}`)
-  }
-
-  async function startSession() {
-    if (!navigator.mediaDevices || !window.RTCPeerConnection) {
-      toast.error(t.microphoneUnavailable)
-      return
-    }
-    setError("")
-    setTranscript("")
-    setStatus("connecting")
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const peer = new RTCPeerConnection()
-      const output = new Audio()
-      output.autoplay = true
-      for (const track of stream.getTracks()) peer.addTrack(track, stream)
-      peer.ontrack = ({ streams }) => {
-        output.srcObject = streams[0] ?? null
-        void output.play().catch(() => undefined)
-      }
-      peer.onconnectionstatechange = () => {
-        if (peer.connectionState === "failed" && activeSession.current?.peer === peer) {
-          stopSession("error")
-          setError(t.realtimeConnectionFailed)
-        }
-      }
-      const offer = await peer.createOffer()
-      await peer.setLocalDescription(offer)
-      if (!offer.sdp) throw new Error(t.realtimeConnectionFailed)
-      const form = new FormData()
-      form.set("sdp", offer.sdp)
-      form.set(
-        "session",
-        new Blob(
-          [
-            JSON.stringify({
-              type: "realtime",
-              model: "gpt-realtime-1.5",
-              instructions: instructions.trim(),
-              output_modalities: ["audio"],
-              audio: {
-                input: {
-                  format: { type: "audio/pcm", rate: 24000 },
-                  noise_reduction: { type: "near_field" },
-                  transcription: { model: "gpt-4o-mini-transcribe" },
-                  turn_detection: {
-                    type: "server_vad",
-                    interrupt_response: true,
-                    create_response: true,
-                    silence_duration_ms: 500,
-                  },
-                },
-                output: {
-                  format: { type: "audio/pcm", rate: 24000 },
-                  voice: "marin",
-                },
-              },
-            }),
-          ],
-          { type: "application/json" }
-        )
-      )
-      const call = await apiForm<RealtimeCall>(sdk, "/api/realtime/calls", form, {
-        headers: { "x-session-id": crypto.randomUUID() },
-      })
-      await peer.setRemoteDescription({ type: "answer", sdp: call.sdp })
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
-      const socket = new WebSocket(
-        `${protocol}//${window.location.host}/api/realtime?token=${encodeURIComponent(call.sideband_token)}`
-      )
-      activeSession.current = { stream, peer, socket, output }
-      socket.onopen = () => {
-        if (activeSession.current?.socket === socket) setStatus("live")
-      }
-      socket.onmessage = (event) => {
-        if (typeof event.data !== "string") return
-        try {
-          appendTranscript(JSON.parse(event.data))
-        } catch {
-          // The sideband can send non-JSON control frames; WebRTC media remains active.
-        }
-      }
-      socket.onerror = () => {
-        if (activeSession.current?.socket === socket) {
-          stopSession("error")
-          setError(t.realtimeConnectionFailed)
-        }
-      }
-      socket.onclose = () => {
-        if (activeSession.current?.socket === socket) {
-          stopSession("error")
-          setError(t.realtimeConnectionFailed)
-        }
-      }
-    } catch (cause) {
-      stopSession("error")
-      setError(message(cause, t))
-    }
-  }
-
-  const statusLabel = {
-    idle: t.realtimeIdle,
-    connecting: t.realtimeConnecting,
-    live: t.realtimeLive,
-    error: t.realtimeConnectionFailed,
-  }[status]
-  const active = status === "connecting" || status === "live"
-
-  return (
-    <div className="grid max-w-6xl gap-5">
-      <Card>
-        <CardHeader className="flex-row items-start justify-between gap-4">
-          <div className="grid gap-1">
-            <CardTitle>gpt-realtime-1.5</CardTitle>
-            <CardDescription>{t.realtimeMicrophoneHelp}</CardDescription>
-          </div>
-          <Badge variant={status === "error" ? "destructive" : "outline"}>
-            <RadioIcon data-icon="inline-start" />
-            {statusLabel}
-          </Badge>
-        </CardHeader>
-        <CardContent className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.72fr)]">
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor="realtime-instructions">
-                {t.realtimeInstruction}
-              </FieldLabel>
-              <Textarea
-                id="realtime-instructions"
-                rows={4}
-                disabled={active}
-                value={instructions}
-                onChange={(event) => setInstructions(event.target.value)}
-              />
-              <FieldDescription>{t.realtimeInstructionHelp}</FieldDescription>
-            </Field>
-            <div className="flex flex-wrap items-center gap-2">
-              {active ? (
-                <Button variant="destructive" onClick={() => stopSession()}>
-                  <SquareIcon data-icon="inline-start" />
-                  {t.realtimeStop}
-                </Button>
-              ) : (
-                <Button onClick={() => void startSession()}>
-                  <MicIcon data-icon="inline-start" />
-                  {t.realtimeStart}
-                </Button>
-              )}
-              {status === "connecting" && <Spinner />}
-            </div>
-          </FieldGroup>
-          <Field>
-            <FieldLabel htmlFor="realtime-transcript">
-              {t.realtimeTranscript}
-            </FieldLabel>
-            <Textarea
-              id="realtime-transcript"
-              className="min-h-44 resize-y leading-6"
-              placeholder={t.realtimeTranscriptEmpty}
-              readOnly
-              value={transcript}
-            />
-          </Field>
-        </CardContent>
-      </Card>
-
-      {error && (
-        <Alert variant="destructive">
-          <ShieldAlertIcon />
-          <AlertTitle>{t.realtimeConnectionFailed}</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
-
-      <Card>
-        <CardHeader>
-          <CardTitle>{t.realtimeRouteTitle}</CardTitle>
-          <CardDescription>{t.realtimeRouteDescription}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <dl className="grid gap-px overflow-hidden rounded-lg border bg-border md:grid-cols-2">
-            <div className="grid gap-1 bg-background p-4">
-              <dt>{t.realtimePublicEndpoint}</dt>
-              <dd>
-                <code>POST /v1/realtime/calls</code>
-              </dd>
-            </div>
-            <div className="grid gap-1 bg-background p-4">
-              <dt>{t.realtimeUpstreamEndpoint}</dt>
-              <dd>
-                <code>POST https://api.openai.com/v1/realtime/calls</code>
-              </dd>
-            </div>
-          </dl>
-        </CardContent>
-      </Card>
-    </div>
-  )
-}
-
-const MAX_REFERENCE_IMAGES = 4
-const MAX_REFERENCE_IMAGE_BYTES = 4 * 1024 * 1024
-const MAX_REFERENCE_IMAGE_TOTAL_BYTES = 8 * 1024 * 1024
-const SUPPORTED_REFERENCE_IMAGE_TYPES = [
-  "image/png",
-  "image/jpeg",
-  "image/webp",
-  "image/gif",
-]
-
-function readFileAsDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.addEventListener("load", () => {
-      if (typeof reader.result === "string") resolve(reader.result)
-      else reject(new Error("reference image data is unavailable"))
-    })
-    reader.addEventListener("error", () =>
-      reject(reader.error ?? new Error("reference image read failed"))
-    )
-    reader.readAsDataURL(file)
-  })
-}
-
-function isSupportedImageSize(width: string, height: string) {
-  const parsedWidth = Number(width)
-  const parsedHeight = Number(height)
-  if (
-    !Number.isInteger(parsedWidth) ||
-    !Number.isInteger(parsedHeight) ||
-    parsedWidth > 3840 ||
-    parsedHeight > 3840 ||
-    parsedWidth % 16 !== 0 ||
-    parsedHeight % 16 !== 0
-  ) {
-    return false
-  }
-  const pixels = parsedWidth * parsedHeight
-  return (
-    pixels >= 655360 &&
-    pixels <= 8294400 &&
-    Math.max(parsedWidth, parsedHeight) <=
-      3 * Math.min(parsedWidth, parsedHeight)
-  )
-}
-
-function ImageGenerationPage({
-  sdk,
-  locale,
-}: {
-  sdk: AuthSdk
-  locale: Locale
-}) {
-  const t = copy[locale]
-  const [prompt, setPrompt] = useState("")
-  const [sizePreset, setSizePreset] = useState("1024x1024")
-  const [width, setWidth] = useState("1024")
-  const [height, setHeight] = useState("1024")
-  const [quality, setQuality] = useState("auto")
-  const [image, setImage] = useState("")
-  const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>([])
-  const [pending, setPending] = useState(false)
-  const isCustomSize = sizePreset === "custom"
-  const customSizeValid = isSupportedImageSize(width, height)
-  const size = isCustomSize ? `${width}x${height}` : sizePreset
-
-  async function selectReferenceImages(fileList: FileList | null) {
-    const files = Array.from(fileList ?? [])
-    if (!files.length) return
-    if (referenceImages.length + files.length > MAX_REFERENCE_IMAGES) {
-      toast.error(t.imageReferenceCountExceeded)
-      return
-    }
-    if (
-      files.some((file) => !SUPPORTED_REFERENCE_IMAGE_TYPES.includes(file.type))
-    ) {
-      toast.error(t.imageReferenceInvalid)
-      return
-    }
-    if (files.some((file) => file.size > MAX_REFERENCE_IMAGE_BYTES)) {
-      toast.error(t.imageReferenceTooLarge)
-      return
-    }
-    const currentBytes = referenceImages.reduce(
-      (total, reference) => total + reference.size,
-      0
-    )
-    const selectedBytes = files.reduce((total, file) => total + file.size, 0)
-    if (currentBytes + selectedBytes > MAX_REFERENCE_IMAGE_TOTAL_BYTES) {
-      toast.error(t.imageReferenceTotalExceeded)
-      return
-    }
-    try {
-      const next = await Promise.all(
-        files.map(async (file) => ({
-          id: crypto.randomUUID(),
-          name: file.name,
-          size: file.size,
-          dataUrl: await readFileAsDataUrl(file),
-        }))
-      )
-      setReferenceImages((current) => [...current, ...next])
-    } catch {
-      toast.error(t.imageReferenceReadError)
-    }
-  }
-
-  function removeReferenceImage(id: string) {
-    setReferenceImages((current) =>
-      current.filter((reference) => reference.id !== id)
-    )
-  }
-
-  async function generate() {
-    if (!prompt.trim()) {
-      toast.error(t.noImagePrompt)
-      return
-    }
-    setPending(true)
-    try {
-      const response = await api<{ data: Array<{ b64_json: string }> }>(
-        sdk,
-        "/api/images/generations",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            model: "gpt-image-2",
-            prompt: prompt.trim(),
-            n: 1,
-            size,
-            quality,
-            output_format: "png",
-            ...(referenceImages.length > 0
-              ? {
-                  reference_images: referenceImages.map(
-                    (reference) => reference.dataUrl
-                  ),
-                }
-              : {}),
-          }),
-        }
-      )
-      const result = response.data[0]?.b64_json
-      if (!result)
-        throw new Error("image generation response is missing image data")
-      setImage(`data:image/png;base64,${result}`)
-    } catch (error) {
-      toast.error(message(error, t))
-    } finally {
-      setPending(false)
-    }
-  }
-
-  function download() {
-    const link = document.createElement("a")
-    link.download = "generated-image.png"
-    link.href = image
-    link.click()
-  }
-
-  return (
-    <div className="grid max-w-5xl gap-5">
-      <Card>
-        <CardHeader>
-          <CardTitle>{t.imagePrompt}</CardTitle>
-          <CardDescription>{t.pageImages}</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-5">
-          <Field>
-            <FieldLabel htmlFor="image-prompt">{t.imagePrompt}</FieldLabel>
-            <Textarea
-              id="image-prompt"
-              className="min-h-36 resize-y leading-6"
-              onChange={(event) => setPrompt(event.target.value)}
-              placeholder={t.imagePromptPlaceholder}
-              value={prompt}
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="image-reference">
-              {t.imageReference}
-            </FieldLabel>
-            <Input
-              id="image-reference"
-              type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif"
-              multiple
-              onChange={(event) => {
-                void selectReferenceImages(event.target.files)
-                event.currentTarget.value = ""
-              }}
-            />
-            <FieldDescription>
-              {t.imageReferenceHelp} {t.imageReferenceCount}{" "}
-              {referenceImages.length}/{MAX_REFERENCE_IMAGES}
-            </FieldDescription>
-            {referenceImages.length > 0 && (
-              <div
-                aria-label={t.imageReference}
-                className="grid grid-cols-2 gap-3 sm:grid-cols-4"
-                role="list"
-              >
-                {referenceImages.map((reference) => (
-                  <div className="min-w-0" key={reference.id} role="listitem">
-                    <div className="relative overflow-hidden rounded-md border bg-muted">
-                      <img
-                        alt={reference.name}
-                        className="aspect-square w-full object-cover"
-                        src={reference.dataUrl}
-                      />
-                      <Button
-                        aria-label={`${t.removeReferenceImage}: ${reference.name}`}
-                        className="absolute top-1 right-1 bg-background/90"
-                        onClick={() => removeReferenceImage(reference.id)}
-                        size="icon-sm"
-                        type="button"
-                        variant="ghost"
-                      >
-                        <Trash2Icon />
-                      </Button>
-                    </div>
-                    <p
-                      className="truncate pt-1 text-xs text-muted-foreground"
-                      title={reference.name}
-                    >
-                      {reference.name}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Field>
-          <div className="grid gap-5 sm:grid-cols-2">
-            <Field>
-              <FieldLabel htmlFor="image-size">{t.imageSize}</FieldLabel>
-              <Select
-                value={sizePreset}
-                onValueChange={(value) => value && setSizePreset(value)}
-              >
-                <SelectTrigger id="image-size">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectItem value="auto">{t.imageAuto}</SelectItem>
-                    <SelectItem value="1024x1024">
-                      {t.imageSquare} · 1024 × 1024
-                    </SelectItem>
-                    <SelectItem value="1536x1024">
-                      {t.imageLandscape} · 1536 × 1024
-                    </SelectItem>
-                    <SelectItem value="1024x1536">
-                      {t.imagePortrait} · 1024 × 1536
-                    </SelectItem>
-                    <SelectItem value="2048x2048">
-                      {t.image2kSquare} · 2048 × 2048
-                    </SelectItem>
-                    <SelectItem value="2048x1152">
-                      {t.image2kLandscape} · 2048 × 1152
-                    </SelectItem>
-                    <SelectItem value="3840x2160">
-                      {t.image4kLandscape} · 3840 × 2160
-                    </SelectItem>
-                    <SelectItem value="2160x3840">
-                      {t.image4kPortrait} · 2160 × 3840
-                    </SelectItem>
-                    <SelectItem value="custom">{t.imageCustom}</SelectItem>
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-              <FieldDescription>{t.imageSizeHelp}</FieldDescription>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="image-quality">{t.imageQuality}</FieldLabel>
-              <Select
-                value={quality}
-                onValueChange={(value) => value && setQuality(value)}
-              >
-                <SelectTrigger id="image-quality">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectItem value="auto">{t.imageAuto}</SelectItem>
-                    <SelectItem value="low">{t.imageDraft}</SelectItem>
-                    <SelectItem value="medium">{t.imageStandard}</SelectItem>
-                    <SelectItem value="high">{t.imageHigh}</SelectItem>
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </Field>
-          </div>
-          {isCustomSize && (
-            <Field data-invalid={!customSizeValid}>
-              <FieldLabel>{t.imageCustom}</FieldLabel>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="grid gap-2">
-                  <FieldLabel htmlFor="image-width">{t.imageWidth}</FieldLabel>
-                  <Input
-                    aria-invalid={!customSizeValid}
-                    id="image-width"
-                    inputMode="numeric"
-                    max={3840}
-                    min={16}
-                    onChange={(event) => setWidth(event.target.value)}
-                    step={16}
-                    type="number"
-                    value={width}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <FieldLabel htmlFor="image-height">
-                    {t.imageHeight}
-                  </FieldLabel>
-                  <Input
-                    aria-invalid={!customSizeValid}
-                    id="image-height"
-                    inputMode="numeric"
-                    max={3840}
-                    min={16}
-                    onChange={(event) => setHeight(event.target.value)}
-                    step={16}
-                    type="number"
-                    value={height}
-                  />
-                </div>
-              </div>
-              {!customSizeValid && (
-                <FieldError>{t.imageSizeInvalid}</FieldError>
-              )}
-            </Field>
-          )}
-        </CardContent>
-        <CardContent className="border-t pt-5">
-          <Button
-            disabled={
-              !prompt.trim() || pending || (isCustomSize && !customSizeValid)
-            }
-            onClick={() => void generate()}
-          >
-            {pending ? (
-              <Spinner data-icon="inline-start" />
-            ) : (
-              <ImageIcon data-icon="inline-start" />
-            )}
-            {pending ? t.generatingImage : t.generateImage}
-          </Button>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="flex-row items-center justify-between gap-4">
-          <div className="grid gap-1">
-            <CardTitle>{t.generatedImage}</CardTitle>
-            <CardDescription>{t.imageEmpty}</CardDescription>
-          </div>
-          <Button
-            disabled={!image}
-            onClick={download}
-            size="sm"
-            variant="outline"
-          >
-            <DownloadIcon data-icon="inline-start" />
-            {t.downloadImage}
-          </Button>
-        </CardHeader>
-        <CardContent>
-          {image ? (
-            <div className="flex min-h-72 items-center justify-center overflow-hidden rounded-lg border bg-muted/30 p-3">
-              <img
-                alt={prompt}
-                className="max-h-[42rem] max-w-full object-contain"
-                src={image}
-              />
-            </div>
-          ) : (
-            <div className="flex min-h-72 items-center justify-center rounded-lg border border-dashed px-6 text-center text-sm text-muted-foreground">
-              {t.imageEmpty}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  )
+type ProviderBalanceState = {
+  provider: Provider
+  status: "loading" | "success" | "error"
+  balance?: ProviderBalance
+  error?: string
 }
 
 function Providers({
@@ -5377,82 +4507,128 @@ function Providers({
   const t = copy[locale]
   const queryClient = useQueryClient()
   const isAdministrator = user.role !== "user"
-  const [open, setOpen] = useState(false)
-  const [tokenDialog, setTokenDialog] =
-    useState<ProviderTokenDialogState | null>(null)
+  const [addOpen, setAddOpen] = useState(false)
+  const [keyTarget, setKeyTarget] = useState<Provider | null>(null)
   const [editingProviderId, setEditingProviderId] = useState<string | null>(
     null
   )
   const [editingProviderName, setEditingProviderName] = useState("")
   const [editingProviderPending, setEditingProviderPending] = useState(false)
   const [testState, setTestState] = useState<ProviderTestState | null>(null)
-  const [resetProvider, setResetProvider] = useState<Provider | null>(null)
-  const [resetTarget, setResetTarget] =
-    useState<ProviderRateLimitResetTarget | null>(null)
-  const [resetPending, setResetPending] = useState(false)
-  const [circuitProvider, setCircuitProvider] = useState<Provider | null>(null)
+  const [balanceState, setBalanceState] = useState<ProviderBalanceState | null>(
+    null
+  )
   const [deleteTarget, setDeleteTarget] = useState<Provider | null>(null)
   const [deletePending, setDeletePending] = useState(false)
-  const [proxyDialog, setProxyDialog] =
-    useState<ProviderProxyDialogState | null>(null)
-  const tokenRequest = useRef<AbortController | null>(null)
+  const [togglePending, setTogglePending] = useState<string | null>(null)
   const testRequest = useRef<AbortController | null>(null)
   const { data, error, loading } = useApiQuery<Provider[]>(
     sdk,
     "/api/providers",
-    2_000
-  )
-  const { data: usageData, error: usageError } =
-    useApiQuery<ProviderUsageResponse>(sdk, "/api/providers/usage")
-  const { data: resetData, error: resetError } =
-    useApiQuery<ProviderRateLimitResetsResponse>(
-      sdk,
-      "/api/providers/rate-limit-resets"
-    )
-  const { data: circuitData } = useApiQuery<ProviderCircuitSummaryResponse>(
-    sdk,
-    "/api/providers/circuit-events"
+    5_000
   )
   useEffect(
     () => () => {
-      tokenRequest.current?.abort()
       testRequest.current?.abort()
     },
     []
   )
+
   function refreshProviders() {
     void queryClient.invalidateQueries({ queryKey: ["/api/providers"] })
-    void queryClient.invalidateQueries({ queryKey: ["/api/providers/usage"] })
-    void queryClient.invalidateQueries({
-      queryKey: ["/api/providers/circuit-events"],
-    })
-    void queryClient.invalidateQueries({
-      queryKey: ["/api/providers/rate-limit-resets"],
-    })
   }
-  async function mutate(id: string, body: object) {
+
+  async function testProvider(provider: Provider) {
+    testRequest.current?.abort()
+    const controller = new AbortController()
+    testRequest.current = controller
+    setTestState({ provider, status: "loading" })
     try {
-      await api(sdk, `/api/providers/${id}`, {
+      const result = await api<{
+        ok: boolean
+        status?: number | null
+        latency_ms?: number
+        model?: string
+        error?: string | null
+      }>(sdk, `/api/providers/${provider.id}/test`, {
+        method: "POST",
+        signal: controller.signal,
+      })
+      setTestState({
+        provider,
+        status: result.ok ? "success" : "error",
+        latency_ms: result.latency_ms,
+        model: result.model,
+        error: result.error ?? (result.ok ? undefined : t.providerTestFailed),
+      })
+      refreshProviders()
+    } catch (cause) {
+      if (isAbortError(cause)) return
+      setTestState({ provider, status: "error", error: message(cause, t) })
+    }
+  }
+
+  async function loadBalance(provider: Provider) {
+    setBalanceState({ provider, status: "loading" })
+    try {
+      const balance = await api<ProviderBalance>(
+        sdk,
+        `/api/providers/${provider.id}/balance`
+      )
+      setBalanceState({ provider, status: "success", balance })
+    } catch (cause) {
+      setBalanceState({
+        provider,
+        status: "error",
+        error: message(cause, t),
+      })
+    }
+  }
+
+  async function toggleProvider(provider: Provider, enabled: boolean) {
+    if (togglePending) return
+    setTogglePending(provider.id)
+    try {
+      await api(sdk, `/api/providers/${provider.id}`, {
         method: "PATCH",
-        body: JSON.stringify(body),
+        body: JSON.stringify({ enabled }),
       })
       refreshProviders()
       toast.success(t.providerUpdated)
     } catch (cause) {
       toast.error(message(cause, t))
+    } finally {
+      setTogglePending(null)
     }
   }
-  function beginProviderNameEdit(provider: Provider) {
+
+  async function toggleVisibility(provider: Provider) {
+    if (togglePending) return
+    setTogglePending(provider.id)
+    try {
+      await api(sdk, `/api/providers/${provider.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          visibility:
+            provider.visibility === "public" ? "private" : "public",
+        }),
+      })
+      refreshProviders()
+      toast.success(t.providerUpdated)
+    } catch (cause) {
+      toast.error(message(cause, t))
+    } finally {
+      setTogglePending(null)
+    }
+  }
+
+  function startRename(provider: Provider) {
     setEditingProviderId(provider.id)
     setEditingProviderName(provider.name)
   }
-  function cancelProviderNameEdit() {
+
+  async function saveName(provider: Provider) {
     if (editingProviderPending) return
-    setEditingProviderId(null)
-    setEditingProviderName("")
-  }
-  async function saveProviderName(provider: Provider) {
-    if (editingProviderPending || editingProviderId !== provider.id) return
     setEditingProviderPending(true)
     try {
       await api(sdk, `/api/providers/${provider.id}`, {
@@ -5460,7 +4636,6 @@ function Providers({
         body: JSON.stringify({ name: editingProviderName }),
       })
       setEditingProviderId(null)
-      setEditingProviderName("")
       refreshProviders()
       toast.success(t.providerUpdated)
     } catch (cause) {
@@ -5469,53 +4644,13 @@ function Providers({
       setEditingProviderPending(false)
     }
   }
-  async function openTokens(provider: Provider) {
-    tokenRequest.current?.abort()
-    const request = new AbortController()
-    tokenRequest.current = request
-    setTokenDialog({ provider, loading: true })
-    try {
-      const tokens = await api<ProviderTokens>(
-        sdk,
-        `/api/providers/${provider.id}`,
-        { signal: request.signal }
-      )
-      if (tokenRequest.current === request)
-        setTokenDialog({ provider, loading: false, tokens })
-    } catch (cause) {
-      if (!isAbortError(cause) && tokenRequest.current === request)
-        setTokenDialog({ provider, loading: false, error: message(cause, t) })
-    } finally {
-      if (tokenRequest.current === request) tokenRequest.current = null
-    }
-  }
-  async function test(provider: Provider) {
-    testRequest.current?.abort()
-    const request = new AbortController()
-    testRequest.current = request
-    setTestState({ provider, status: "loading" })
-    try {
-      const result = await api<{ usage: ProviderUsage }>(
-        sdk,
-        `/api/providers/${provider.id}/test`,
-        { method: "POST", signal: request.signal }
-      )
-      if (testRequest.current === request) {
-        setTestState({ provider, status: "success", usage: result.usage })
-        toast.success(t.testSucceeded)
-      }
-    } catch (cause) {
-      if (!isAbortError(cause) && testRequest.current === request)
-        setTestState({ provider, status: "error", error: message(cause, t) })
-    } finally {
-      if (testRequest.current === request) testRequest.current = null
-    }
-  }
+
   async function remove() {
-    if (!deleteTarget || deletePending) return
+    const target = deleteTarget
+    if (!target || deletePending) return
     setDeletePending(true)
     try {
-      await api(sdk, `/api/providers/${deleteTarget.id}`, { method: "DELETE" })
+      await api(sdk, `/api/providers/${target.id}`, { method: "DELETE" })
       setDeleteTarget(null)
       refreshProviders()
       toast.success(t.providerDeleted)
@@ -5525,537 +4660,268 @@ function Providers({
       setDeletePending(false)
     }
   }
-  function closeTokens() {
-    tokenRequest.current?.abort()
-    tokenRequest.current = null
-    setTokenDialog(null)
-  }
-  function closeTest() {
-    testRequest.current?.abort()
-    testRequest.current = null
-    setTestState(null)
-  }
-  function beginRateLimitReset(
-    provider: Provider,
-    credit?: ProviderRateLimitResetCredit
-  ) {
-    setResetProvider(null)
-    setResetTarget({
-      provider,
-      credit,
-      redeemRequestId: crypto.randomUUID(),
-    })
-  }
-  async function consumeRateLimitReset() {
-    if (!resetTarget || resetPending) return
-    setResetPending(true)
-    try {
-      const result = await api<ProviderRateLimitResetResult>(
-        sdk,
-        `/api/providers/${resetTarget.provider.id}/rate-limit-resets/consume`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            credit_id: resetTarget.credit?.id,
-            redeem_request_id: resetTarget.redeemRequestId,
-          }),
-        }
-      )
-      const code = result.code
-      if (code === "nothing_to_reset" || code === "nothingToReset") {
-        toast.warning(t.rateLimitResetNothingToReset)
-      } else if (code === "no_credit" || code === "noCredit") {
-        toast.warning(t.rateLimitResetNoCredit)
-      } else if (code === "already_redeemed" || code === "alreadyRedeemed") {
-        toast.success(t.rateLimitResetAlreadyRedeemed)
-      } else {
-        toast.success(t.rateLimitResetSuccess)
-      }
-      setResetTarget(null)
-      refreshProviders()
-    } catch (cause) {
-      toast.error(message(cause, t))
-    } finally {
-      setResetPending(false)
-    }
-  }
+
   if (loading) return <LoadingTable />
   if (error) return <ErrorState message={error} />
+  const providers = data ?? []
+
   return (
     <>
       <Card>
         <CardHeader className="flex-row items-start justify-between">
-          <div className="min-w-0">
+          <div>
             <CardTitle>{t.providerPool}</CardTitle>
             <CardDescription>{t.providerDescription}</CardDescription>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {t.providerQueueRefresh}
-            </p>
           </div>
-          <Button onClick={() => setOpen(true)}>
+          <Button onClick={() => setAddOpen(true)}>
             <PlusIcon data-icon="inline-start" />
             {t.addProvider}
           </Button>
         </CardHeader>
         <CardContent>
-          {!data?.length ? (
+          {providers.length === 0 ? (
             <EmptyState
               icon={<BoxesIcon />}
               title={t.noProviders}
               description={t.noProvidersDescription}
               action={
-                <Button onClick={() => setOpen(true)}>{t.addProvider}</Button>
+                <Button onClick={() => setAddOpen(true)}>{t.addProvider}</Button>
               }
             />
           ) : (
-            <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
-              {data.map((provider) => {
-                const entry = usageData?.providers[provider.id]
-                const usage = entry?.usage
-                const quota =
-                  usage?.rate_limit?.primary_window ??
-                  usage?.rate_limit?.secondary_window
-                const resetEntry = resetData?.providers[provider.id]
-                const resets = resetEntry?.resets
-                const resetCredits = sortRateLimitResetCreditsByExpiry(
-                  resets?.credits ?? []
-                )
-                const availableResetCount = Math.max(
-                  0,
-                  resets?.available_count ?? 0
-                )
-                const email = usageEmail(usage)
-                const resetUnavailable = resetError || resetEntry?.error
-
-                return (
-                  <article
-                    key={provider.id}
-                    className="flex min-w-0 flex-col gap-4 rounded-lg border bg-background p-4"
-                  >
-                    <header className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1 space-y-2">
-                        <div className="flex min-w-0 flex-wrap items-center gap-2">
-                          {editingProviderId === provider.id ? (
-                            <div className="flex min-w-0 flex-1 items-center gap-1">
-                              <Input
-                                aria-label={
-                                  t.editProviderName + ": " + provider.name
-                                }
-                                autoFocus
-                                className="h-8 min-w-0"
-                                value={editingProviderName}
-                                onChange={(event) =>
-                                  setEditingProviderName(event.target.value)
-                                }
-                                onKeyDown={(event) => {
-                                  if (event.key === "Enter") {
-                                    event.preventDefault()
-                                    void saveProviderName(provider)
+            <DataTable>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{t.name}</TableHead>
+                    <TableHead>{t.status}</TableHead>
+                    <TableHead>{t.providerVisibility}</TableHead>
+                    <TableHead>{t.providerLoad}</TableHead>
+                    <TableHead>{t.providerUsage7d}</TableHead>
+                    <TableHead>{t.lastUsed}</TableHead>
+                    <TableHead>{t.actions}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {providers.map((provider) => {
+                    const enabled = provider.manual_disabled === 0
+                    const usage = provider.usage
+                    return (
+                      <TableRow key={provider.id}>
+                        <TableCell className="font-medium">
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-1">
+                              {editingProviderId === provider.id ? (
+                                <Input
+                                  className="h-8 w-48"
+                                  value={editingProviderName}
+                                  onChange={(event) =>
+                                    setEditingProviderName(event.target.value)
                                   }
-                                  if (event.key === "Escape") {
-                                    event.preventDefault()
-                                    cancelProviderNameEdit()
-                                  }
-                                }}
-                              />
-                              <Button
-                                size="icon-xs"
-                                variant="ghost"
-                                aria-label={
-                                  t.saveProviderName + ": " + provider.name
-                                }
-                                disabled={editingProviderPending}
-                                onClick={() => void saveProviderName(provider)}
-                              >
-                                {editingProviderPending ? (
-                                  <Spinner />
-                                ) : (
-                                  <CheckIcon />
-                                )}
-                              </Button>
-                              <Button
-                                size="icon-xs"
-                                variant="ghost"
-                                aria-label={
-                                  t.cancelProviderName + ": " + provider.name
-                                }
-                                disabled={editingProviderPending}
-                                onClick={cancelProviderNameEdit}
-                              >
-                                <XIcon />
-                              </Button>
+                                />
+                              ) : (
+                                <span>{provider.name}</span>
+                              )}
+                              {editingProviderId === provider.id ? (
+                                <>
+                                  <Button
+                                    size="icon-xs"
+                                    variant="ghost"
+                                    aria-label={t.saveProviderName}
+                                    disabled={editingProviderPending}
+                                    onClick={() => void saveName(provider)}
+                                  >
+                                    <CheckIcon />
+                                  </Button>
+                                  <Button
+                                    size="icon-xs"
+                                    variant="ghost"
+                                    aria-label={t.cancelProviderName}
+                                    onClick={() => setEditingProviderId(null)}
+                                  >
+                                    <XIcon />
+                                  </Button>
+                                </>
+                              ) : (
+                                <Button
+                                  size="icon-xs"
+                                  variant="ghost"
+                                  aria-label={`${t.editProviderName}: ${provider.name}`}
+                                  onClick={() => startRename(provider)}
+                                >
+                                  <PencilIcon />
+                                </Button>
+                              )}
                             </div>
-                          ) : (
-                            <div className="flex min-w-0 items-center gap-1">
-                              <h3
-                                className="min-w-0 truncate font-medium"
-                                title={provider.name}
-                              >
-                                {provider.name}
-                              </h3>
-                              <Button
-                                size="icon-xs"
-                                variant="ghost"
-                                aria-label={
-                                  t.editProviderName + ": " + provider.name
-                                }
-                                disabled={editingProviderPending}
-                                onClick={() => beginProviderNameEdit(provider)}
-                              >
-                                <PencilIcon />
-                              </Button>
-                            </div>
-                          )}
-                          <StatusBadge
-                            status={provider.status}
-                            locale={locale}
-                          />
-                        </div>
-                        {user.role !== "user" && (
-                          <div className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
-                            <span>{t.owner}:</span>
-                            {provider.owner_id ? (
-                              <LinkitUserInfo userId={provider.owner_id} />
-                            ) : (
-                              "—"
-                            )}
+                            {isAdministrator && provider.owner_id ? (
+                              <span className="font-mono text-xs text-muted-foreground">
+                                {t.owner}: {provider.owner_id}
+                              </span>
+                            ) : null}
+                            {provider.last_error ? (
+                              <span className="text-xs text-destructive">
+                                {t.providerLastError}: {provider.last_error}
+                              </span>
+                            ) : null}
+                            {provider.cooldown_until ? (
+                              <span className="text-xs text-muted-foreground">
+                                {t.providerCooldownUntil}{" "}
+                                {formatTime(provider.cooldown_until, locale)}
+                              </span>
+                            ) : null}
                           </div>
-                        )}
-                      </div>
-                      <Switch
-                        aria-label={t.status + ": " + provider.name}
-                        checked={!provider.manual_disabled}
-                        onCheckedChange={(checked) =>
-                          void mutate(provider.id, { enabled: checked })
-                        }
-                      />
-                    </header>
-
-                    <div className="grid gap-3 rounded-md bg-muted/40 p-3 sm:grid-cols-2">
-                      <div className="min-w-0">
-                        <p className="text-xs font-medium text-muted-foreground">
-                          {t.httpProxy}
-                        </p>
-                        <Badge variant={provider.http_proxy_configured ? "secondary" : "outline"}>
-                          {provider.http_proxy_configured
-                            ? t.proxyConfigured
-                            : t.proxyNotConfigured}
-                        </Badge>
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-xs font-medium text-muted-foreground">
-                          {t.providerOriginator}
-                        </p>
-                        <Badge variant="secondary">{provider.originator}</Badge>
-                        {provider.allow_other_originator && (
-                          <Badge variant="outline" className="ml-1">{t.originatorFallback}</Badge>
-                        )}
-                      </div>
-                      <div className="sm:col-span-2">
-                        <OriginatorFallbackField
-                          id={`provider-fallback-${provider.id}`}
-                          checked={provider.allow_other_originator}
-                          onChange={(allowed) => void mutate(provider.id, { allow_other_originator: allowed })}
-                          locale={locale}
-                        />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-xs font-medium text-muted-foreground">
-                          {t.providerVisibility}
-                        </p>
-                        <Badge
-                          variant={
-                            provider.visibility === "public"
-                              ? "secondary"
-                              : "outline"
-                          }
-                        >
-                          {provider.visibility === "public"
-                            ? t.providerVisibilityPublic
-                            : t.providerVisibilityPrivate}
-                        </Badge>
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-xs font-medium text-muted-foreground">
-                          {t.usageEmail}
-                        </p>
-                        <p
-                          className="truncate text-sm"
-                          title={email || undefined}
-                        >
-                          {email || "—"}
-                        </p>
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-xs font-medium text-muted-foreground">
-                          {t.usagePlan}
-                        </p>
-                        <p className="truncate text-sm">
-                          {usage?.plan_type || "—"}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-medium text-muted-foreground">
-                          {t.providerLoad}
-                        </p>
-                        <p className="text-sm tabular-nums">
-                          {provider.inflight} / {provider.concurrency_limit}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-medium text-muted-foreground">
-                          {t.providerQueued}
-                        </p>
-                        <p className="text-sm tabular-nums">
-                          {provider.queued}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-medium text-muted-foreground">
-                          {t.actualProvidedValue}
-                        </p>
-                        <p className="text-sm tabular-nums">
-                          {formatUsd(
-                            provider.actual_provided_usd_nanos,
-                            locale
-                          )}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-medium text-muted-foreground">
-                          {t.officialProvidedValue}
-                        </p>
-                        <p className="text-sm tabular-nums">
-                          {formatUsd(
-                            provider.official_provided_usd_nanos,
-                            locale
-                          )}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div className="min-w-0 space-y-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-xs font-medium text-muted-foreground">
-                            {t.quotaRemaining}
-                          </p>
-                          <span className="text-xs tabular-nums">
-                            {remainingPercent(quota)}
-                          </span>
-                        </div>
-                        <QuotaProgress
-                          window={quota}
-                          label={t.quotaRemaining + ": " + provider.name}
-                          unavailable={entry?.error || usageError}
-                        />
-                        <p className="text-xs text-muted-foreground tabular-nums">
-                          {t.resetsIn}: {quotaReset(quota, locale)}
-                        </p>
-                      </div>
-                      <div className="min-w-0 space-y-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-xs font-medium text-muted-foreground">
-                            {t.rateLimitResetsAvailable}
-                          </p>
-                          {resetUnavailable ? (
-                            <span
-                              className="text-xs text-muted-foreground"
-                              title={resetUnavailable}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col items-start gap-2">
+                            <StatusBadge
+                              status={
+                                enabled ? provider.status : "disabled"
+                              }
+                              locale={locale}
+                            />
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={togglePending === provider.id}
+                              onClick={() =>
+                                void toggleProvider(provider, !enabled)
+                              }
                             >
-                              —
-                            </span>
-                          ) : (
-                            <Badge variant="secondary">
-                              {availableResetCount}
+                              {enabled ? t.providerDisable : t.providerEnable}
+                            </Button>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col items-start gap-2">
+                            <Badge
+                              variant={
+                                provider.visibility === "public"
+                                  ? "secondary"
+                                  : "outline"
+                              }
+                            >
+                              {providerVisibilityLabel(
+                                provider.visibility,
+                                t
+                              )}
                             </Badge>
-                          )}
-                        </div>
-                        {resetUnavailable ? (
-                          <p
-                            className="text-xs text-muted-foreground"
-                            title={resetUnavailable}
-                          >
-                            {t.quotaUnavailable}
-                          </p>
-                        ) : (
-                          <RateLimitResetExpiries
-                            locale={locale}
-                            credits={resetCredits}
-                          />
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="flex items-start justify-between gap-3 border-t pt-3">
-                      <div className="min-w-0">
-                        <p className="mb-2 text-xs font-medium text-muted-foreground">
-                          {t.circuitBreaker}
-                        </p>
-                        <ProviderCircuitStatus
-                          event={circuitData?.providers[provider.id]}
-                          locale={locale}
-                          provider={provider}
-                          onOpenHistory={() => setCircuitProvider(provider)}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap gap-2 border-t pt-3">
-                      <Button size="sm" variant="outline" onClick={() => setProxyDialog({ provider })}>
-                        {provider.http_proxy_configured && <CheckIcon data-icon="inline-start" />}
-                        {t.upstreamProxy}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          void mutate(provider.id, {
-                            visibility:
-                              provider.visibility === "public"
-                                ? "private"
-                                : "public",
-                          })
-                        }
-                      >
-                        {provider.visibility === "public" ? (
-                          <LockIcon data-icon="inline-start" />
-                        ) : (
-                          <GlobeIcon data-icon="inline-start" />
-                        )}
-                        {provider.visibility === "public"
-                          ? t.makeProviderPrivate
-                          : t.makeProviderPublic}
-                      </Button>
-                      {availableResetCount > 0 && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setResetProvider(provider)}
-                        >
-                          <RefreshCwIcon data-icon="inline-start" />
-                          {t.viewRateLimitResets}
-                        </Button>
-                      )}
-                      {isAdministrator && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={
-                            tokenDialog?.provider.id === provider.id &&
-                            tokenDialog.loading
-                          }
-                          onClick={() => void openTokens(provider)}
-                        >
-                          {tokenDialog?.provider.id === provider.id &&
-                          tokenDialog.loading ? (
-                            <Spinner data-icon="inline-start" />
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled={togglePending === provider.id}
+                              onClick={() => void toggleVisibility(provider)}
+                            >
+                              {provider.visibility === "public"
+                                ? t.makeProviderPrivate
+                                : t.makeProviderPublic}
+                            </Button>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col text-xs">
+                            <span>
+                              {provider.inflight} / {provider.concurrency_limit}
+                            </span>
+                            <span className="text-muted-foreground">
+                              {t.providerQueued}: {provider.queued}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {usage ? (
+                            <div className="flex flex-col text-xs">
+                              <span>
+                                {t.providerUsageRequests}: {usage.requests} (
+                                {t.providerUsageErrors}: {usage.errors})
+                              </span>
+                              <span>
+                                {t.providerUsageTokens}: {usage.input_tokens}/
+                                {usage.output_tokens}/
+                                {usage.cached_tokens}
+                              </span>
+                              <span className="text-muted-foreground">
+                                {t.providerUsageCost}:{" "}
+                                {formatUsd(usage.actual_cost_usd_nanos, locale)}
+                              </span>
+                            </div>
                           ) : (
-                            <KeyRoundIcon data-icon="inline-start" />
+                            <span className="text-xs text-muted-foreground">
+                              {t.providerNoUsage}
+                            </span>
                           )}
-                          {t.editProvider}
-                        </Button>
-                      )}
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={
-                          testState?.provider.id === provider.id &&
-                          testState.status === "loading"
-                        }
-                        onClick={() => void test(provider)}
-                      >
-                        {testState?.provider.id === provider.id &&
-                        testState.status === "loading" ? (
-                          <Spinner data-icon="inline-start" />
-                        ) : (
-                          <ActivityIcon data-icon="inline-start" />
-                        )}
-                        {t.testProvider}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          void mutate(provider.id, { refresh: true })
-                        }
-                      >
-                        <RefreshCwIcon data-icon="inline-start" />
-                        {t.refresh}
-                      </Button>
-                      <Button
-                        size="icon-sm"
-                        variant="ghost"
-                        aria-label={t.deleteProvider + ": " + provider.name}
-                        onClick={() => setDeleteTarget(provider)}
-                      >
-                        <Trash2Icon />
-                      </Button>
-                    </div>
-                  </article>
-                )
-              })}
-            </div>
+                        </TableCell>
+                        <TableCell>{formatTime(provider.last_used_at, locale)}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => void testProvider(provider)}
+                            >
+                              {t.testProvider}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => void loadBalance(provider)}
+                            >
+                              {t.providerBalance}
+                            </Button>
+                            {isAdministrator ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setKeyTarget(provider)}
+                              >
+                                {t.providerApiKey}
+                              </Button>
+                            ) : null}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setDeleteTarget(provider)}
+                            >
+                              <Trash2Icon data-icon="inline-start" />
+                              {t.deleteProvider}
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            </DataTable>
           )}
         </CardContent>
       </Card>
       <ProviderDialog
         sdk={sdk}
         locale={locale}
-        open={open}
-        onOpenChange={setOpen}
-        onDone={() => {
-          setOpen(false)
-          refreshProviders()
-        }}
-      />
-      <ProviderTokensDialog
-        sdk={sdk}
-        locale={locale}
-        state={tokenDialog}
-        onClose={closeTokens}
-        onSaved={() => {
-          closeTokens()
-          refreshProviders()
-        }}
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        onDone={refreshProviders}
       />
       <ProviderTestDialog
         locale={locale}
         state={testState}
-        onClose={closeTest}
+        onClose={() => setTestState(null)}
       />
-      <ProviderProxyDialog
+      <ProviderBalanceDialog
+        locale={locale}
+        state={balanceState}
+        onClose={() => setBalanceState(null)}
+      />
+      <ProviderKeyDialog
         sdk={sdk}
         locale={locale}
-        state={proxyDialog}
-        onClose={() => setProxyDialog(null)}
-        onSaved={() => {
-          refreshProviders()
-        }}
+        provider={keyTarget}
+        onClose={() => setKeyTarget(null)}
+        onSaved={refreshProviders}
       />
-      {resetProvider && (
-        <ProviderRateLimitResetsDialog
-          locale={locale}
-          provider={resetProvider}
-          resets={resetData?.providers[resetProvider.id]?.resets}
-          error={resetData?.providers[resetProvider.id]?.error || resetError}
-          onClose={() => setResetProvider(null)}
-          onConsume={beginRateLimitReset}
-        />
-      )}
-      {circuitProvider && (
-        <ProviderCircuitHistorySheet
-          sdk={sdk}
-          locale={locale}
-          provider={circuitProvider}
-          onClose={() => setCircuitProvider(null)}
-        />
-      )}
       <AlertDialog
         open={Boolean(deleteTarget)}
-        onOpenChange={(next) =>
-          !next && !deletePending && setDeleteTarget(null)
-        }
+        onOpenChange={(next) => !next && !deletePending && setDeleteTarget(null)}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -6069,56 +4935,13 @@ function Providers({
               {t.cancel}
             </AlertDialogCancel>
             <AlertDialogAction
-              variant="destructive"
               disabled={deletePending}
-              onClick={() => void remove()}
-            >
-              {deletePending && <Spinner data-icon="inline-start" />}
-              {t.confirmDeleteProvider}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      <AlertDialog
-        open={Boolean(resetTarget)}
-        onOpenChange={(next) => !next && !resetPending && setResetTarget(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t.rateLimitResetConfirmTitle}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t.rateLimitResetConfirmDescription}
-            </AlertDialogDescription>
-            {resetTarget?.credit && (
-              <RateLimitResetExpiry
-                locale={locale}
-                credit={resetTarget.credit}
-              />
-            )}
-          </AlertDialogHeader>
-          <Definition
-            rows={[
-              [t.provider, resetTarget?.provider.name || "—"],
-              [
-                t.viewRateLimitResets,
-                resetTarget?.credit?.title || t.rateLimitResetUseNext,
-              ],
-            ]}
-          />
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={resetPending}>
-              {t.cancel}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={resetPending}
               onClick={(event) => {
                 event.preventDefault()
-                void consumeRateLimitReset()
+                void remove()
               }}
             >
-              {resetPending && <Spinner data-icon="inline-start" />}
-              {resetPending ? t.rateLimitResetting : t.confirmRateLimitReset}
+              {t.confirmDeleteProvider}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -6127,275 +4950,224 @@ function Providers({
   )
 }
 
-function ProviderProxyDialog({
+function ProviderDialog({
   sdk,
   locale,
-  state,
-  onClose,
-  onSaved,
+  open,
+  onOpenChange,
+  onDone,
 }: {
   sdk: AuthSdk
   locale: Locale
-  state: ProviderProxyDialogState | null
-  onClose: () => void
-  onSaved: () => void
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onDone: () => void
 }) {
   const t = copy[locale]
-  const [url, setUrl] = useState("")
+  const [name, setName] = useState("")
+  const [apiKey, setApiKey] = useState("")
+  const [visibility, setVisibility] = useState<ProviderVisibility>("private")
   const [pending, setPending] = useState(false)
-  const [configured, setConfigured] = useState(false)
-  const [health, setHealth] = useState<ProviderProxyHealth | "loading">()
-  useEffect(() => {
-    setUrl("")
-    setPending(false)
-    setConfigured(Boolean(state?.provider.http_proxy_configured))
-    setHealth(undefined)
-  }, [state])
-  async function save(remove = false) {
-    if (!state || pending) return
+
+  function close() {
+    setName("")
+    setApiKey("")
+    setVisibility("private")
+    onOpenChange(false)
+  }
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    if (pending) return
+    if (!isConsumerToken(apiKey)) {
+      toast.error(t.providerApiKeyInvalid)
+      return
+    }
     setPending(true)
     try {
-      await api(sdk, `/api/providers/${state.provider.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ http_proxy_url: remove ? "" : url.trim() }),
+      await api(sdk, "/api/providers", {
+        method: "POST",
+        body: JSON.stringify({ name, api_key: apiKey, visibility }),
       })
-      toast.success(t.providerUpdated)
-      setConfigured(!remove)
-      setHealth(undefined)
-      onSaved()
+      close()
+      onDone()
+      toast.success(t.providerAdded)
     } catch (cause) {
       toast.error(message(cause, t))
     } finally {
       setPending(false)
     }
   }
-  async function test() {
-    if (!state || pending || !configured) return
-    setHealth("loading")
-    try {
-      setHealth(await api<ProviderProxyHealth>(sdk, `/api/providers/${state.provider.id}/proxy-health`, { method: "POST" }))
-    } catch (cause) {
-      setHealth({ proxy_configured: true, error: message(cause, t) })
-    }
-  }
-  const testing = health === "loading"
-  const result = health === "loading" ? undefined : health
-  const location = result?.location
-  const place = [location?.city, location?.region, location?.country]
-    .filter(Boolean)
-    .join(", ")
+
   return (
-    <Dialog open={Boolean(state)} onOpenChange={(next) => !next && !pending && onClose()}>
+    <Dialog open={open} onOpenChange={(next) => !next && close()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{t.proxyConfigTitle}: {state?.provider.name}</DialogTitle>
-          <DialogDescription>{t.proxyConfigDescription}</DialogDescription>
+          <DialogTitle>{t.addProviderTitle}</DialogTitle>
+          <DialogDescription>{t.providerDescription}</DialogDescription>
         </DialogHeader>
-        <FieldGroup>
-          <Field>
-            <FieldLabel htmlFor="provider-http-proxy">{t.proxyUrl}</FieldLabel>
-            <Input
-              id="provider-http-proxy"
-              autoComplete="off"
-              type="password"
-              placeholder="http://username:password@host:port"
-              value={url}
-              onChange={(event) => setUrl(event.target.value)}
+        <form onSubmit={submit}>
+          <FieldGroup>
+            <ProviderNameField
+              id="provider-name"
+              value={name}
+              onChange={setName}
+              locale={locale}
             />
-            <FieldDescription>{t.proxyUrlHelp}</FieldDescription>
-          </Field>
-          <DialogFooter className="gap-2 sm:gap-0">
-            {configured && (
-              <Button type="button" variant="destructive" disabled={pending} onClick={() => void save(true)}>
-                {pending && <Spinner data-icon="inline-start" />}
-                {t.removeProxy}
+            <Field>
+              <FieldLabel htmlFor="provider-api-key">
+                {t.providerApiKey}
+              </FieldLabel>
+              <Input
+                id="provider-api-key"
+                value={apiKey}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(event) => setApiKey(event.target.value)}
+                required
+              />
+              <FieldDescription>{t.providerApiKeyHelp}</FieldDescription>
+            </Field>
+            <ProviderVisibilityField
+              id="provider-visibility"
+              value={visibility}
+              onChange={setVisibility}
+              locale={locale}
+            />
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={close}>
+                {t.cancel}
               </Button>
-            )}
-            <Button type="button" variant="outline" disabled={pending} onClick={onClose}>
-              {t.cancel}
-            </Button>
-            <Button type="button" disabled={pending || !url.trim()} onClick={() => void save()}>
-              {pending && <Spinner data-icon="inline-start" />}
-              {t.saveProxy}
-            </Button>
-          </DialogFooter>
-        </FieldGroup>
-        <section className="space-y-3 border-t pt-5">
-          <div>
-            <h3 className="text-sm font-medium">{t.proxyDiagnostics}</h3>
-            <p className="mt-1 text-xs text-muted-foreground">{t.proxyDiagnosticsDescription}</p>
-          </div>
-          {!configured ? (
-            <p className="text-sm text-muted-foreground">{t.proxyNotConfiguredDescription}</p>
-          ) : testing ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Spinner />
-              {t.testingProxy}
-            </div>
-          ) : result?.error ? (
-            <Alert variant="destructive">
-              <AlertTitle>{t.proxyDiagnostics}</AlertTitle>
-              <AlertDescription>{result.error}</AlertDescription>
-            </Alert>
-          ) : result ? (
-            <div className="flex flex-col gap-5">
-              <section className="space-y-2">
-                <h4 className="text-sm font-medium">{t.proxyExitLocation}</h4>
-                {location?.ip ? (
-                  <Definition rows={[
-                    ["IP", location.ip],
-                    [t.proxyExitLocation, place || "—"],
-                    ["ASN / Org", location.org || "—"],
-                  ]} />
-                ) : (
-                  <p className="text-sm text-muted-foreground">{t.proxyLocationUnavailable}</p>
-                )}
-              </section>
-              <section className="space-y-2">
-                <h4 className="text-sm font-medium">{t.proxyNetworkQuality}</h4>
-                <Definition rows={[
-                  [t.lbToProxy, result.lb_to_proxy_ms === undefined ? "—" : `${result.lb_to_proxy_ms} ms`],
-                  [t.lbViaProxyToOpenAi, result.proxy_to_openai_ms === undefined ? "—" : `${result.proxy_to_openai_ms} ms`],
-                ]} />
-                <p className="text-xs text-muted-foreground">{t.proxyLatencyHelp}</p>
-              </section>
-            </div>
-          ) : null}
-          {configured && (
-            <Button type="button" variant="outline" disabled={testing} onClick={() => void test()}>
-              {testing && <Spinner data-icon="inline-start" />}
-              {result ? t.testAgain : t.proxyDiagnostics}
-            </Button>
-          )}
-        </section>
+              <Button type="submit" disabled={pending || !apiKey.trim()}>
+                {t.addProvider}
+              </Button>
+            </DialogFooter>
+          </FieldGroup>
+        </form>
       </DialogContent>
     </Dialog>
   )
 }
 
-function ProviderTokensDialog({
+function ProviderKeyDialog({
   sdk,
   locale,
-  state,
+  provider,
   onClose,
   onSaved,
 }: {
   sdk: AuthSdk
   locale: Locale
-  state: ProviderTokenDialogState | null
+  provider: Provider | null
   onClose: () => void
   onSaved: () => void
 }) {
   const t = copy[locale]
-  const [access, setAccess] = useState("")
-  const [refresh, setRefresh] = useState("")
+  const [name, setName] = useState("")
+  const [apiKey, setApiKey] = useState("")
   const [pending, setPending] = useState(false)
-  const saveRequest = useRef<AbortController | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState("")
+
   useEffect(() => {
-    saveRequest.current?.abort()
-    saveRequest.current = null
-    setPending(false)
-    setAccess(state?.tokens?.access_key ?? "")
-    setRefresh(state?.tokens?.refresh_key ?? "")
-  }, [state])
-  async function save(event: FormEvent) {
+    if (!provider) return
+    let cancelled = false
+    setLoading(true)
+    setError("")
+    api<{ name: string; api_key: string }>(
+      sdk,
+      `/api/providers/${provider.id}/key`
+    )
+      .then((value) => {
+        if (cancelled) return
+        setName(value.name)
+        setApiKey(value.api_key)
+      })
+      .catch((cause) => {
+        if (cancelled) return
+        setError(message(cause, t))
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [provider, sdk, t])
+
+  async function submit(event: FormEvent) {
     event.preventDefault()
-    if (!state || pending) return
-    const request = new AbortController()
-    saveRequest.current = request
+    if (!provider || pending) return
     setPending(true)
     try {
-      await api(sdk, `/api/providers/${state.provider.id}`, {
+      await api(sdk, `/api/providers/${provider.id}/key`, {
         method: "PUT",
-        body: JSON.stringify({
-          access_key: access,
-          refresh_key: refresh,
-        }),
-        signal: request.signal,
+        body: JSON.stringify({ name, api_key: apiKey }),
       })
-      if (saveRequest.current === request) {
-        toast.success(t.tokensSaved)
-        onSaved()
-      }
+      onSaved()
+      onClose()
+      toast.success(t.providerKeySaved)
     } catch (cause) {
-      if (!isAbortError(cause) && saveRequest.current === request)
-        toast.error(message(cause, t))
+      toast.error(message(cause, t))
     } finally {
-      if (saveRequest.current === request) {
-        saveRequest.current = null
-        setPending(false)
-      }
+      setPending(false)
     }
   }
-  function close() {
-    saveRequest.current?.abort()
-    saveRequest.current = null
-    setPending(false)
-    onClose()
-  }
+
   return (
-    <Dialog open={Boolean(state)} onOpenChange={(next) => !next && close()}>
+    <Dialog
+      open={Boolean(provider)}
+      onOpenChange={(next) => !next && !pending && onClose()}
+    >
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
-            {t.tokenTitle}: {state?.provider.name}
+            {t.providerKeyTitle}: {provider?.name}
           </DialogTitle>
-          <DialogDescription>{t.tokenDescription}</DialogDescription>
+          <DialogDescription>{t.providerKeyDescription}</DialogDescription>
         </DialogHeader>
-        {state?.loading ? (
+        {loading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Spinner />
-            {t.loadingTokens}
+            {t.loading}
           </div>
-        ) : state?.error ? (
-          <ErrorState message={state.error} />
+        ) : error ? (
+          <ErrorState message={error} />
         ) : (
-          <form onSubmit={save}>
+          <form onSubmit={submit}>
             <FieldGroup>
               <Field>
-                <FieldLabel htmlFor="edit-access-key">{t.accessKey}</FieldLabel>
+                <FieldLabel htmlFor="provider-key-name">{t.name}</FieldLabel>
                 <Input
-                  id="edit-access-key"
-                  autoComplete="off"
-                  value={access}
-                  onChange={(event) => setAccess(event.target.value)}
-                  required
+                  id="provider-key-name"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
                 />
-                <FieldDescription>{t.accessClaimHelp}</FieldDescription>
               </Field>
               <Field>
-                <FieldLabel htmlFor="edit-refresh-key">
-                  {t.refreshKey}
+                <FieldLabel htmlFor="provider-key-value">
+                  {t.providerApiKey}
                 </FieldLabel>
                 <Input
-                  id="edit-refresh-key"
+                  id="provider-key-value"
+                  value={apiKey}
                   autoComplete="off"
-                  value={refresh}
-                  onChange={(event) => setRefresh(event.target.value)}
-                  required
+                  spellCheck={false}
+                  onChange={(event) => setApiKey(event.target.value)}
                 />
-              </Field>
-              <Field>
-                <FieldLabel>{t.providerOriginator}</FieldLabel>
-                <div>
-                  <Badge variant="secondary">
-                    {state?.provider.originator ?? ""}
-                  </Badge>
-                </div>
-                <FieldDescription>
-                  {t.providerOriginatorLockedHelp}
-                </FieldDescription>
+                <FieldDescription>{t.providerApiKeyHelp}</FieldDescription>
               </Field>
               <DialogFooter>
-                <Button type="button" variant="outline" onClick={close}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={pending}
+                  onClick={onClose}
+                >
                   {t.cancel}
                 </Button>
-                <Button
-                  type="submit"
-                  disabled={pending || !access.trim() || !refresh.trim()}
-                >
-                  {pending && <Spinner data-icon="inline-start" />}
-                  {t.saveTokens}
+                <Button type="submit" disabled={pending || !apiKey.trim()}>
+                  {t.saveProviderKey}
                 </Button>
               </DialogFooter>
             </FieldGroup>
@@ -6416,24 +5188,14 @@ function ProviderTestDialog({
   onClose: () => void
 }) {
   const t = copy[locale]
-  const usage = state?.usage
-  const primary = usage?.rate_limit?.primary_window
-  const secondary = usage?.rate_limit?.secondary_window
-  const hasSummary = Boolean(
-    usageEmail(usage) ||
-    usage?.plan_type ||
-    primary ||
-    secondary ||
-    usage?.credits
-  )
   return (
     <Dialog open={Boolean(state)} onOpenChange={(next) => !next && onClose()}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>
-            {t.testTitle}: {state?.provider.name}
+            {t.providerTestTitle}: {state?.provider.name}
           </DialogTitle>
-          <DialogDescription>{t.testDescription}</DialogDescription>
+          <DialogDescription>{t.providerTestDescription}</DialogDescription>
         </DialogHeader>
         {state?.status === "loading" ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -6443,38 +5205,16 @@ function ProviderTestDialog({
         ) : state?.status === "error" ? (
           <ErrorState message={state.error || t.unknownError} />
         ) : (
-          usage && (
-            <div className="flex flex-col gap-4">
-              {hasSummary ? (
-                <Definition
-                  rows={[
-                    [t.usageEmail, usageEmail(usage) || "—"],
-                    [t.usagePlan, usage.plan_type || "—"],
-                    [t.quotaRemaining, remainingPercent(primary ?? secondary)],
-                    [t.resetsIn, quotaReset(primary ?? secondary, locale)],
-                    [
-                      t.credits,
-                      usage.credits?.unlimited
-                        ? "∞"
-                        : (usage.credits?.balance ?? "—"),
-                    ],
-                  ]}
-                />
-              ) : (
-                <Alert>
-                  <AlertTitle>{t.usageUnavailable}</AlertTitle>
-                </Alert>
-              )}
-              <div className="flex flex-col gap-2">
-                <h3 className="text-sm font-medium">{t.rawUsage}</h3>
-                <ScrollArea className="max-h-72 rounded-lg border bg-muted p-3">
-                  <pre className="text-xs break-all whitespace-pre-wrap">
-                    {JSON.stringify(usage, null, 2)}
-                  </pre>
-                </ScrollArea>
-              </div>
-            </div>
-          )
+          <Definition
+            rows={[
+              [t.providerTestResult, t.providerTestSucceeded],
+              [t.providerTestModel, state?.model || "—"],
+              [
+                t.providerTestLatency,
+                formatLatency(state?.latency_ms),
+              ],
+            ]}
+          />
         )}
         <DialogFooter>
           <Button onClick={onClose}>{t.close}</Button>
@@ -6484,656 +5224,59 @@ function ProviderTestDialog({
   )
 }
 
-function ProviderRateLimitResetsDialog({
+function ProviderBalanceDialog({
   locale,
-  provider,
-  resets,
-  error,
-  onClose,
-  onConsume,
-}: {
-  locale: Locale
-  provider: Provider
-  resets?: ProviderRateLimitResets
-  error?: string
-  onClose: () => void
-  onConsume: (provider: Provider, credit?: ProviderRateLimitResetCredit) => void
-}) {
-  const t = copy[locale]
-  const credits = sortRateLimitResetCreditsByExpiry(resets?.credits ?? [])
-  const availableCount = Math.max(0, resets?.available_count ?? 0)
-  return (
-    <Dialog open onOpenChange={(next) => !next && onClose()}>
-      <DialogContent className="sm:max-w-3xl">
-        <DialogHeader>
-          <DialogTitle>
-            {t.rateLimitResetsTitle}: {provider.name}
-          </DialogTitle>
-          <DialogDescription>{t.rateLimitResetsDescription}</DialogDescription>
-        </DialogHeader>
-        {error ? (
-          <ErrorState message={error} />
-        ) : (
-          <div className="flex flex-col gap-4">
-            <Definition rows={[[t.rateLimitResetsAvailable, availableCount]]} />
-            {credits.length > 0 ? (
-              <DataTable>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{t.viewRateLimitResets}</TableHead>
-                      <TableHead>{t.rateLimitResetExpiresAt}</TableHead>
-                      <TableHead className="text-right">{t.actions}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {credits.map((credit) => (
-                      <TableRow key={credit.id}>
-                        <TableCell>
-                          <div className="flex flex-col gap-1">
-                            <span className="font-medium">
-                              {credit.title || credit.reset_type || credit.id}
-                            </span>
-                            {credit.description && (
-                              <span className="text-xs text-muted-foreground">
-                                {credit.description}
-                              </span>
-                            )}
-                            <span className="text-xs text-muted-foreground">
-                              {t.rateLimitResetGrantedAt}:{" "}
-                              {formatTime(credit.granted_at, locale)}
-                            </span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <RateLimitResetExpiry
-                            locale={locale}
-                            credit={credit}
-                          />
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => onConsume(provider, credit)}
-                          >
-                            <RefreshCwIcon data-icon="inline-start" />
-                            {t.rateLimitResetUse}
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </DataTable>
-            ) : availableCount > 0 ? (
-              <Alert>
-                <RefreshCwIcon />
-                <AlertTitle>{t.rateLimitResetsTitle}</AlertTitle>
-                <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
-                  <span>{t.rateLimitResetUnknownCredit}</span>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => onConsume(provider)}
-                  >
-                    <RefreshCwIcon data-icon="inline-start" />
-                    {t.rateLimitResetUseNext}
-                  </Button>
-                </AlertDescription>
-              </Alert>
-            ) : (
-              <EmptyState
-                icon={<RefreshCwIcon />}
-                title={t.rateLimitResetsAvailable}
-                description={t.rateLimitResetNoCredit}
-              />
-            )}
-          </div>
-        )}
-        <DialogFooter>
-          <Button onClick={onClose}>{t.close}</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-function RateLimitResetExpiry({
-  locale,
-  credit,
-}: {
-  locale: Locale
-  credit?: ProviderRateLimitResetCredit
-}) {
-  const t = copy[locale]
-  if (!credit) return <span className="text-xs text-muted-foreground">—</span>
-
-  const expiresAt = rateLimitResetTimestampSeconds(credit.expires_at)
-  if (expiresAt === undefined)
-    return (
-      <span className="text-xs text-muted-foreground">
-        {t.rateLimitResetNoExpiry}
-      </span>
-    )
-  const status = rateLimitResetExpiryStatus(expiresAt)
-  const exactTime = formatRateLimitResetExpiryTime(expiresAt, locale)
-
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        aria-label={`${t.rateLimitResetExpiresAt}: ${exactTime}`}
-        className="inline-flex cursor-help rounded-sm bg-transparent p-0 text-inherit outline-none focus-visible:ring-3 focus-visible:ring-ring"
-      >
-        <Badge
-          variant={
-            status === "expires-soon" || status === "expired"
-              ? "destructive"
-              : "secondary"
-          }
-        >
-          {status === "expired"
-            ? t.rateLimitResetExpired
-            : `${t.rateLimitResetExpiresIn} ${formatRateLimitResetTimeRemaining(expiresAt, locale)}`}
-        </Badge>
-      </TooltipTrigger>
-      <TooltipContent>
-        {t.rateLimitResetExpiresAt}: {exactTime}
-      </TooltipContent>
-    </Tooltip>
-  )
-}
-
-function RateLimitResetExpiries({
-  locale,
-  credits,
-}: {
-  locale: Locale
-  credits: ProviderRateLimitResetCredit[]
-}) {
-  if (!credits.length)
-    return <span className="text-xs text-muted-foreground">—</span>
-
-  return (
-    <div className="flex min-w-28 flex-col items-start gap-1">
-      {credits.map((credit) => (
-        <RateLimitResetExpiry key={credit.id} locale={locale} credit={credit} />
-      ))}
-    </div>
-  )
-}
-
-function ProviderCircuitHistorySheet({
-  sdk,
-  locale,
-  provider,
+  state,
   onClose,
 }: {
-  sdk: AuthSdk
   locale: Locale
-  provider: Provider
+  state: ProviderBalanceState | null
   onClose: () => void
 }) {
   const t = copy[locale]
-  const { data, error, loading } = useApiQuery<ProviderCircuitEvent[]>(
-    sdk,
-    `/api/providers/${provider.id}/circuit-events`
-  )
+  const balances = state?.balance?.balance_infos ?? []
   return (
-    <Sheet open onOpenChange={(next) => !next && onClose()}>
-      <SheetContent className="w-full p-0 sm:max-w-xl">
-        <SheetHeader>
-          <SheetTitle>
-            {t.circuitHistoryTitle}: {provider.name}
-          </SheetTitle>
-          <SheetDescription>{t.circuitHistoryDescription}</SheetDescription>
-        </SheetHeader>
-        <ScrollArea className="min-h-0 flex-1 px-4 pb-4">
-          {loading ? (
-            <div className="flex flex-col gap-3">
-              {Array.from({ length: 3 }, (_, index) => (
-                <Skeleton key={index} className="h-28 w-full" />
-              ))}
-            </div>
-          ) : error ? (
-            <ErrorState message={error} />
-          ) : !data?.length ? (
-            <EmptyState
-              icon={<ShieldCheckIcon />}
-              title={t.circuitNeverOpened}
-              description={t.circuitHistoryDescription}
-            />
-          ) : (
-            <div className="flex flex-col gap-4">
-              {data.map((event, index) => (
-                <div key={event.id} className="flex flex-col gap-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <Badge
-                      variant={event.closed_at ? "secondary" : "destructive"}
-                    >
-                      {event.closed_at ? (
-                        <CheckCircle2Icon />
-                      ) : (
-                        <ShieldAlertIcon />
-                      )}
-                      {event.closed_at ? t.circuitRecovered : t.circuitOpen}
-                    </Badge>
-                    <span className="text-xs text-muted-foreground tabular-nums">
-                      {t.circuitOpenedAt}: {formatTime(event.opened_at, locale)}
-                    </span>
-                  </div>
-                  <Definition
-                    rows={[
-                      [t.circuitReason, event.cause],
-                      [
-                        t.circuitUntil,
-                        formatTime(event.cooldown_until, locale),
-                      ],
-                      [
-                        t.circuitClosedAt,
-                        event.closed_at
-                          ? formatTime(event.closed_at, locale)
-                          : "—",
-                      ],
-                      [t.circuitResolution, event.resolution || "—"],
-                    ]}
-                  />
-                  <div className="flex flex-col gap-2">
-                    <span className="text-xs font-medium text-muted-foreground">
-                      {t.circuitRateLimitHeaders}
-                    </span>
-                    <ScrollArea className="max-h-40 rounded-lg border bg-muted p-3">
-                      <pre className="text-xs break-all whitespace-pre-wrap">
-                        {formatCircuitRateLimitHeaders(event.rate_limit_json)}
-                      </pre>
-                    </ScrollArea>
-                  </div>
-                  {index < data.length - 1 && <Separator />}
-                </div>
-              ))}
-            </div>
-          )}
-        </ScrollArea>
-      </SheetContent>
-    </Sheet>
-  )
-}
-
-function ProviderDialog({
-  sdk,
-  locale,
-  open,
-  onOpenChange,
-  onDone,
-}: {
-  sdk: AuthSdk
-  locale: Locale
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  onDone: () => void
-}) {
-  const t = copy[locale]
-  const [path, setPath] = useState<"choose" | "oauth" | "credentials">("choose")
-
-  function close() {
-    setPath("choose")
-    onOpenChange(false)
-  }
-
-  if (path === "credentials") {
-    return (
-      <ProviderCredentialsDialog
-        sdk={sdk}
-        locale={locale}
-        open={open}
-        onClose={close}
-        onDone={onDone}
-      />
-    )
-  }
-
-  if (path === "oauth") {
-    return (
-      <ProviderOAuthDialog
-        sdk={sdk}
-        locale={locale}
-        open={open}
-        onClose={close}
-        onDone={onDone}
-      />
-    )
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={(next) => !next && close()}>
+    <Dialog open={Boolean(state)} onOpenChange={(next) => !next && onClose()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>{t.addProviderTitle}</DialogTitle>
-          <DialogDescription>{t.addProviderDescription}</DialogDescription>
+          <DialogTitle>
+            {t.providerBalanceTitle}: {state?.provider.name}
+          </DialogTitle>
+          <DialogDescription>
+            {t.providerBalanceDescription}
+          </DialogDescription>
         </DialogHeader>
-        <div className="grid gap-3">
-          <Button
-            type="button"
-            variant="outline"
-            className="grid h-auto w-full min-w-0 gap-1 rounded-lg border p-4 text-left whitespace-normal transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring"
-            onClick={() => setPath("oauth")}
-          >
-            <span className="flex min-w-0 items-center gap-2 text-sm font-medium">
-              <LogInIcon className="size-4" />
-              <span className="min-w-0">{t.addProviderOAuth}</span>
-            </span>
-            <span className="min-w-0 text-sm text-pretty text-muted-foreground">
-              {t.addProviderOAuthDescription}
-            </span>
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="grid h-auto w-full min-w-0 gap-1 rounded-lg border p-4 text-left whitespace-normal transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring"
-            onClick={() => setPath("credentials")}
-          >
-            <span className="flex min-w-0 items-center gap-2 text-sm font-medium">
-              <KeyRoundIcon className="size-4" />
-              <span className="min-w-0">{t.addProviderCredentials}</span>
-            </span>
-            <span className="min-w-0 text-sm text-pretty text-muted-foreground">
-              {t.addProviderCredentialsDescription}
-            </span>
-          </Button>
-        </div>
+        {state?.status === "loading" ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Spinner />
+            {t.loading}
+          </div>
+        ) : state?.status === "error" ? (
+          <ErrorState message={state.error || t.unknownError} />
+        ) : balances.length === 0 ? (
+          <Alert>
+            <AlertTitle>{t.providerBalanceUnavailable}</AlertTitle>
+          </Alert>
+        ) : (
+          <Definition
+            rows={[
+              [
+                t.providerBalanceAvailable,
+                state?.balance?.is_available ? t.yes : t.no,
+              ],
+              ...balances.map(
+                (info) =>
+                  [
+                    info.currency || t.providerBalance,
+                    info.total_balance ?? "—",
+                  ] as [string, unknown]
+              ),
+            ]}
+          />
+        )}
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={close}>
-            {t.cancel}
-          </Button>
+          <Button onClick={onClose}>{t.close}</Button>
         </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-function ProviderCredentialsDialog({
-  sdk,
-  locale,
-  open,
-  onClose,
-  onDone,
-}: {
-  sdk: AuthSdk
-  locale: Locale
-  open: boolean
-  onClose: () => void
-  onDone: () => void
-}) {
-  const t = copy[locale]
-  const [name, setName] = useState("")
-  const [access, setAccess] = useState("")
-  const [refresh, setRefresh] = useState("")
-  const [originator, setOriginator] = useState<ProviderOriginator>("codex_cli_rs")
-  const [allowOtherOriginator, setAllowOtherOriginator] = useState(false)
-  const [visibility, setVisibility] = useState<ProviderVisibility>("private")
-  const [pending, setPending] = useState(false)
-
-  async function direct(event: FormEvent) {
-    event.preventDefault()
-    if (pending) return
-    setPending(true)
-    try {
-      await api(sdk, "/api/providers", {
-        method: "POST",
-        body: JSON.stringify({
-          name,
-          access_key: access,
-          refresh_key: refresh,
-          originator,
-          allow_other_originator: allowOtherOriginator,
-          visibility,
-        }),
-      })
-      toast.success(t.providerAdded)
-      onClose()
-      onDone()
-    } catch (cause) {
-      toast.error(message(cause, t))
-    } finally {
-      setPending(false)
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={(next) => !next && !pending && onClose()}>
-      <DialogContent>
-        <form onSubmit={direct}>
-          <DialogHeader>
-            <DialogTitle>{t.addProviderCredentialsTitle}</DialogTitle>
-            <DialogDescription>
-              {t.addProviderCredentialsTitleDescription}
-            </DialogDescription>
-          </DialogHeader>
-          <FieldGroup className="pt-4">
-            <ProviderNameField
-              id="provider-name"
-              value={name}
-              onChange={setName}
-              locale={locale}
-            />
-            <Field>
-              <FieldLabel htmlFor="access-key">{t.accessKey}</FieldLabel>
-              <Input
-                id="access-key"
-                type="password"
-                autoComplete="off"
-                value={access}
-                onChange={(event) => setAccess(event.target.value)}
-                required
-              />
-              <FieldDescription>{t.accessClaimHelp}</FieldDescription>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="refresh-key">{t.refreshKey}</FieldLabel>
-              <Input
-                id="refresh-key"
-                type="password"
-                autoComplete="off"
-                value={refresh}
-                onChange={(event) => setRefresh(event.target.value)}
-                required
-              />
-            </Field>
-            <OriginatorField
-              id="provider-originator"
-              value={originator}
-              onChange={setOriginator}
-              locale={locale}
-            />
-            <OriginatorFallbackField
-              id="provider-originator-fallback"
-              checked={allowOtherOriginator}
-              onChange={setAllowOtherOriginator}
-              disabled={pending}
-              locale={locale}
-            />
-            <ProviderVisibilityField
-              id="provider-visibility"
-              value={visibility}
-              onChange={setVisibility}
-              locale={locale}
-            />
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={pending}
-                onClick={onClose}
-              >
-                {t.cancel}
-              </Button>
-              <Button
-                type="submit"
-                disabled={pending || !access.trim() || !refresh.trim()}
-              >
-                {pending && <Spinner data-icon="inline-start" />}
-                {t.importCredentials}
-              </Button>
-            </DialogFooter>
-          </FieldGroup>
-        </form>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-function ProviderOAuthDialog({
-  sdk,
-  locale,
-  open,
-  onClose,
-  onDone,
-}: {
-  sdk: AuthSdk
-  locale: Locale
-  open: boolean
-  onClose: () => void
-  onDone: () => void
-}) {
-  const t = copy[locale]
-  const [oauth, setOauth] = useState<OAuthFlow | null>(null)
-  const [name, setName] = useState("")
-  const [originator, setOriginator] = useState<ProviderOriginator>("codex_cli_rs")
-  const [allowOtherOriginator, setAllowOtherOriginator] = useState(false)
-  const [visibility, setVisibility] = useState<ProviderVisibility>("private")
-  const [callbackUrl, setCallbackUrl] = useState("")
-  const [pending, setPending] = useState(false)
-
-  async function startOAuth() {
-    setPending(true)
-    try {
-      const value = await api<OAuthFlow>(sdk, "/api/oauth/start", {
-        method: "POST",
-        body: JSON.stringify({ originator }),
-      })
-      setOauth(value)
-      window.open(value.authorize_url, "_blank", "noopener,noreferrer")
-    } catch (cause) {
-      toast.error(message(cause, t))
-    } finally {
-      setPending(false)
-    }
-  }
-
-  async function completeOAuth() {
-    if (!oauth) return
-    setPending(true)
-    try {
-      await api(sdk, "/api/oauth/complete", {
-        method: "POST",
-        body: JSON.stringify({
-          callback_url: callbackUrl,
-          name,
-          allow_other_originator: allowOtherOriginator,
-          visibility,
-        }),
-      })
-      toast.success(t.oauthProviderAdded)
-      setOauth(null)
-      onClose()
-      onDone()
-    } catch (cause) {
-      toast.error(message(cause, t))
-    } finally {
-      setPending(false)
-    }
-  }
-
-  function cancel() {
-    if (pending) return
-    setOauth(null)
-    onClose()
-  }
-
-  return (
-    <Dialog
-      open={open}
-      disablePointerDismissal={Boolean(oauth)}
-      onOpenChange={(next) => !next && !oauth && !pending && onClose()}
-    >
-      <DialogContent showCloseButton={!oauth}>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault()
-            if (oauth) void completeOAuth()
-            else void startOAuth()
-          }}
-        >
-          <DialogHeader>
-            <DialogTitle>{t.addProviderOAuthTitle}</DialogTitle>
-            <DialogDescription>
-              {t.addProviderOAuthInProgressDescription}
-            </DialogDescription>
-          </DialogHeader>
-          <FieldGroup className="pt-4">
-            <ProviderNameField
-              id="oauth-provider-name"
-              value={name}
-              onChange={setName}
-              locale={locale}
-            />
-            <OriginatorField
-              id="oauth-provider-originator"
-              value={originator}
-              onChange={setOriginator}
-              disabled={oauth !== null}
-              locale={locale}
-            />
-            <OriginatorFallbackField
-              id="oauth-provider-originator-fallback"
-              checked={allowOtherOriginator}
-              onChange={setAllowOtherOriginator}
-              disabled={pending}
-              locale={locale}
-            />
-            <ProviderVisibilityField
-              id="oauth-provider-visibility"
-              value={visibility}
-              onChange={setVisibility}
-              locale={locale}
-            />
-            {oauth && (
-              <Field>
-                <FieldLabel htmlFor="oauth-callback-url">
-                  {t.callbackUrl}
-                </FieldLabel>
-                <Textarea
-                  id="oauth-callback-url"
-                  autoComplete="off"
-                  spellCheck={false}
-                  value={callbackUrl}
-                  onChange={(event) => setCallbackUrl(event.target.value)}
-                  required
-                />
-                <FieldDescription>
-                  {t.callbackUrlHelp} {t.oauthStateHelp}
-                </FieldDescription>
-              </Field>
-            )}
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={pending}
-                onClick={cancel}
-              >
-                {t.cancel}
-              </Button>
-              <Button
-                type="submit"
-                disabled={pending || (oauth !== null && !callbackUrl.trim())}
-              >
-                {pending && <Spinner data-icon="inline-start" />}
-                {oauth ? t.completeOauth : t.startOauth}
-              </Button>
-            </DialogFooter>
-          </FieldGroup>
-        </form>
       </DialogContent>
     </Dialog>
   )
@@ -7160,69 +5303,6 @@ function ProviderNameField({
         onChange={(event) => onChange(event.target.value)}
       />
       <FieldDescription>{t.providerNameHelp}</FieldDescription>
-    </Field>
-  )
-}
-
-function OriginatorFallbackField({
-  id, checked, onChange, disabled, locale,
-}: {
-  id: string
-  checked: boolean
-  onChange: (checked: boolean) => void
-  disabled?: boolean
-  locale: Locale
-}) {
-  const t = copy[locale]
-  return (
-    <Field>
-      <div className="flex items-center justify-between gap-3">
-        <FieldLabel htmlFor={id}>{t.allowOtherOriginator}</FieldLabel>
-        <Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onChange} aria-describedby={`${id}-help`} />
-      </div>
-      <FieldDescription id={`${id}-help`}>{t.allowOtherOriginatorHelp}</FieldDescription>
-    </Field>
-  )
-}
-
-function OriginatorField({
-  id,
-  value,
-  onChange,
-  disabled,
-  locale,
-}: {
-  id: string
-  value: ProviderOriginator
-  onChange: (value: ProviderOriginator) => void
-  disabled?: boolean
-  locale: Locale
-}) {
-  const t = copy[locale]
-  return (
-    <Field>
-      <FieldLabel htmlFor={id}>{t.providerOriginator}</FieldLabel>
-      <Select
-        value={value}
-        disabled={disabled}
-        onValueChange={(next) => onChange(next as ProviderOriginator)}
-      >
-        <SelectTrigger id={id}>
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectGroup>
-            {providerOriginators.map((option) => (
-              <SelectItem key={option} value={option}>
-                {providerOriginatorLabel(option, t)}
-              </SelectItem>
-            ))}
-          </SelectGroup>
-        </SelectContent>
-      </Select>
-      <FieldDescription>
-        {disabled ? t.providerOriginatorLockedHelp : t.providerOriginatorHelp}
-      </FieldDescription>
     </Field>
   )
 }
@@ -7269,7 +5349,6 @@ function Consumers({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
   const queryClient = useQueryClient()
   const [name, setName] = useState("")
   const [requestArchive, setRequestArchive] = useState(false)
-  const [interceptDegradation, setInterceptDegradation] = useState(false)
   const [open, setOpen] = useState(false)
   const [secret, setSecret] = useState("")
   const [rotateId, setRotateId] = useState<string | null>(null)
@@ -7293,13 +5372,11 @@ function Consumers({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
         body: JSON.stringify({
           name,
           request_archive: requestArchive,
-          intercept_degradation: interceptDegradation,
         }),
       })
       setSecret(value.secret)
       setName("")
       setRequestArchive(false)
-      setInterceptDegradation(false)
       refreshConsumers()
     } catch (cause) {
       toast.error(message(cause, t))
@@ -7313,18 +5390,6 @@ function Consumers({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
       })
       refreshConsumers()
       toast.success(t.requestArchiveUpdated)
-    } catch (cause) {
-      toast.error(message(cause, t))
-    }
-  }
-  async function updateDegradationInterception(id: string, checked: boolean) {
-    try {
-      await api(sdk, `/api/consumers/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ intercept_degradation: checked }),
-      })
-      refreshConsumers()
-      toast.success(t.interceptDegradationUpdated)
     } catch (cause) {
       toast.error(message(cause, t))
     }
@@ -7433,7 +5498,6 @@ function Consumers({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
                     <TableHead>{t.createdAt}</TableHead>
                     <TableHead>{t.lastUsed}</TableHead>
                     <TableHead>{t.requestArchive}</TableHead>
-                    <TableHead>{t.interceptDegradation}</TableHead>
                     <TableHead>{t.consumerEnabled}</TableHead>
                     <TableHead />
                   </TableRow>
@@ -7484,18 +5548,6 @@ function Consumers({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
                           checked={consumer.request_archive}
                           onCheckedChange={(checked) =>
                             void updateArchive(consumer.id, checked)
-                          }
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Switch
-                          aria-label={`${t.interceptDegradation}: ${consumer.name}`}
-                          checked={consumer.intercept_degradation}
-                          onCheckedChange={(checked) =>
-                            void updateDegradationInterception(
-                              consumer.id,
-                              checked
-                            )
                           }
                         />
                       </TableCell>
@@ -7556,19 +5608,6 @@ function Consumers({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
                   id="consumer-request-archive"
                   checked={requestArchive}
                   onCheckedChange={setRequestArchive}
-                />
-              </Field>
-              <Field orientation="horizontal">
-                <FieldContent>
-                  <FieldLabel htmlFor="consumer-intercept-degradation">
-                    {t.interceptDegradation}
-                  </FieldLabel>
-                  <FieldDescription>{t.interceptDegradationHelp}</FieldDescription>
-                </FieldContent>
-                <Switch
-                  id="consumer-intercept-degradation"
-                  checked={interceptDegradation}
-                  onCheckedChange={setInterceptDegradation}
                 />
               </Field>
               <DialogFooter>
@@ -8382,7 +6421,6 @@ function AuditPage({
                       <TableHead>{t.consumer}</TableHead>
                       <TableHead>{t.time}</TableHead>
                       <TableHead>{t.model}</TableHead>
-                      <TableHead>{t.downstreamUserAgent}</TableHead>
                       <TableHead className="text-right">
                         {t.actualCost}
                       </TableHead>
@@ -8393,7 +6431,7 @@ function AuditPage({
                         {t.priceMultiplier}
                       </TableHead>
                       <TableHead>{t.provider}</TableHead>
-                      <TableHead>{t.sessionId}</TableHead>
+                      <TableHead>{t.threadId}</TableHead>
                       <TableHead>{t.status}</TableHead>
                       <TableHead>{t.usage}</TableHead>
                       <TableHead className="text-right">{t.actions}</TableHead>
@@ -8413,74 +6451,24 @@ function AuditPage({
                         <TableCell className="whitespace-nowrap">
                           {formatTime(row.created_at, locale)}
                         </TableCell>
-                        <TableCell
-                          className={
-                            auditTurnStateMayIndicateDowngrade(row)
-                              ? "bg-amber-500/10"
-                              : undefined
-                          }
-                        >
+                        <TableCell>
                           <div className="flex min-w-52 flex-col gap-1">
-                            <div className="flex flex-wrap items-center gap-1">
-                              <code>{row.model || row.upstream_model || "—"}</code>
-                              {auditModelDiffers(row) && (
-                                <>
-                                  <span
-                                    className="text-muted-foreground"
-                                    aria-hidden="true"
-                                  >
-                                    →
-                                  </span>
-                                  <code
-                                    className="rounded bg-destructive/10 px-1.5 py-0.5 font-medium text-destructive"
-                                    title={t.upstreamModel}
-                                  >
-                                    {row.upstream_model}
-                                  </code>
-                                </>
+                            <code>{row.model || "—"}</code>
+                            <div className="flex flex-wrap gap-1">
+                              <Badge
+                                variant={
+                                  row.peak ? "destructive" : "secondary"
+                                }
+                              >
+                                {row.peak ? t.pricingPeak : t.pricingOffPeak}
+                              </Badge>
+                              {row.reasoning_effort && (
+                                <Badge variant="outline">
+                                  {t.reasoningEffort} · {row.reasoning_effort}
+                                </Badge>
                               )}
                             </div>
-                            {(row.reasoning_effort ||
-                              row.fast_mode ||
-                              auditModelDiffers(row) ||
-                              auditTurnStateMayIndicateDowngrade(row)) && (
-                              <div className="flex flex-wrap gap-1">
-                                {auditModelDiffers(row) && (
-                                  <Badge
-                                    variant="destructive"
-                                    title={t.modelMismatchHint}
-                                  >
-                                    {t.modelDowngraded}
-                                  </Badge>
-                                )}
-                                {auditTurnStateMayIndicateDowngrade(row) && (
-                                  <Badge
-                                    variant="outline"
-                                    className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
-                                    title={t.codexTurnStateLengthWarning}
-                                  >
-                                    {t.codexTurnStateLengthWarning}
-                                  </Badge>
-                                )}
-                                {row.reasoning_effort && (
-                                  <Badge variant="secondary">
-                                    {t.reasoningEffort} · {row.reasoning_effort}
-                                  </Badge>
-                                )}
-                                {row.fast_mode && (
-                                  <Badge variant="secondary">Fast</Badge>
-                                )}
-                              </div>
-                            )}
                           </div>
-                        </TableCell>
-                        <TableCell>
-                          <span
-                            className="block max-w-64 truncate"
-                            title={row.downstream_user_agent || undefined}
-                          >
-                            {row.downstream_user_agent || "—"}
-                          </span>
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
                           {formatUsd(row.actual_cost_usd_nanos, locale)}
@@ -8495,11 +6483,11 @@ function AuditPage({
                           {row.provider_name || "—"}
                         </TableCell>
                         <TableCell>
-                          {row.session_id ? (
+                          {row.thread_id ? (
                             <CopyableIdentifier
-                              value={row.session_id}
-                              label={t.sessionId}
-                              copyLabel={t.copySessionId}
+                              value={row.thread_id}
+                              label={t.threadId}
+                              copyLabel={t.copyThreadId}
                               copiedLabel={t.copied}
                             />
                           ) : (
@@ -8842,18 +6830,6 @@ function RequestDetailPage({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
   )
 }
 
-function auditModelDiffers(data: Pick<Audit, "model" | "upstream_model">) {
-  return Boolean(
-    data.model && data.upstream_model && data.model !== data.upstream_model
-  )
-}
-
-function auditTurnStateMayIndicateDowngrade(
-  data: Pick<Audit, "codex_turn_state_length">
-) {
-  return data.codex_turn_state_length === 312
-}
-
 function RequestSummary({
   data,
   affinityId,
@@ -8876,31 +6852,16 @@ function RequestSummary({
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-6">
-        {auditModelDiffers(data) && (
-          <Alert variant="destructive">
-            <ShieldAlertIcon />
-            <AlertTitle>{labels.modelDowngraded}</AlertTitle>
-            <AlertDescription>
-              {labels.modelMismatchHint} {data.model} → {data.upstream_model}
-            </AlertDescription>
-          </Alert>
-        )}
         <Definition
           rows={[
             [labels.requestId, data.request_id],
-            [labels.sessionId, data.session_id || "—"],
             [labels.threadId, data.thread_id || "—"],
             [labels.consumer, data.consumer_name],
             [labels.userId, data.user_id],
             [labels.provider, data.provider_name || data.provider_id || "—"],
-            [labels.downstreamModel, data.model || "—"],
-            [labels.upstreamModel, data.upstream_model || "—"],
-            [labels.downstreamUserAgent, data.downstream_user_agent || "—"],
-            [labels.downstreamOriginator, data.downstream_originator || "—"],
-            [labels.upstreamOriginator, data.upstream_originator || "—"],
-            [labels.originatorFallbackReason, data.originator_fallback_reason || "—"],
+            [labels.model, data.model || "—"],
+            [labels.pricingTariff, data.peak ? labels.pricingPeak : labels.pricingOffPeak],
             [labels.reasoningEffort, data.reasoning_effort || "—"],
-            [labels.fastMode, data.fast_mode ? "Fast" : "—"],
             [labels.upstreamHttpProtocol, data.upstream_http_version || "—"],
             [labels.httpStatusCode, data.status],
             [
@@ -8913,12 +6874,6 @@ function RequestSummary({
             [labels.errorMessage, data.error ?? "—"],
             [labels.requestSize, formatBytes(data.request_bytes, locale)],
             [labels.responseSize, formatBytes(data.response_bytes, locale)],
-            [
-              labels.codexTurnStateLength,
-              data.codex_turn_state_length == null
-                ? "—"
-                : data.codex_turn_state_length.toLocaleString(locale),
-            ],
             [
               labels.requestTransportSize,
               formatBytes(data.request_transport_bytes, locale),
@@ -9071,7 +7026,6 @@ function DiagnosticBodies({
         <DiagnosticPreview
           title={labels.responseBody}
           value={data.response_body}
-          requestBody={data.request_body}
           truncated={data.response_body_truncated}
         />
       </CardContent>
@@ -9200,191 +7154,23 @@ function HeaderComparison({
 function DiagnosticPreview({
   title,
   value,
-  requestBody,
   truncated = false,
 }: {
   title: string
   value?: string
-  requestBody?: string
   truncated?: boolean
 }) {
   const t = currentMessages()
-  const images = auditImageResponses(value, requestBody)
   return (
     <section className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
         <h3 className="text-sm font-medium">{title}</h3>
         {truncated && <Badge variant="secondary">{t.previewTruncated}</Badge>}
       </div>
-      {images.length > 0 && (
-        <div className="grid gap-4 sm:grid-cols-2">
-          {images.map((image, index) => (
-            <figure key={image.src} className="min-w-0 rounded-md border p-3">
-              <img
-                className="max-h-96 max-w-full rounded-md border bg-muted object-contain"
-                src={image.src}
-                alt={`${t.responseImages} ${index + 1}`}
-              />
-              {image.revisedPrompt && (
-                <figcaption className="mt-3 flex flex-col gap-1">
-                  <span className="text-xs font-medium text-muted-foreground">
-                    {t.revisedPrompt}
-                  </span>
-                  <p className="text-sm leading-6 break-words whitespace-pre-wrap">
-                    {image.revisedPrompt}
-                  </p>
-                </figcaption>
-              )}
-            </figure>
-          ))}
-        </div>
-      )}
       <pre className="max-h-80 overflow-auto rounded-md border bg-muted p-3 font-mono text-xs break-all whitespace-pre-wrap">
         {value || "—"}
       </pre>
     </section>
-  )
-}
-
-function PlatformCapacity({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
-  const t = copy[locale]
-  const query = useQuery({
-    queryKey: ["/api/provider-capacity"],
-    queryFn: ({ signal }) =>
-      api<ProviderCapacity>(sdk, "/api/provider-capacity", { signal }),
-    refetchInterval: 60_000,
-  })
-  const capacity = query.data
-  const hasCapacity = Boolean(capacity?.included_provider_count)
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{t.platformCapacityTitle}</CardTitle>
-        <CardDescription>
-          {query.error ? message(query.error, t) : t.platformCapacityDescription}
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <dl className="grid gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-2">
-          <div className="flex flex-col gap-1 bg-background p-4">
-            <dt>{t.platformPlusCapacity}</dt>
-            <dd className="text-2xl font-semibold tabular-nums">
-              {hasCapacity
-                ? formatPlusEquivalentCapacity(
-                    capacity?.plus_equivalent_remaining_basis_points ?? 0,
-                    locale
-                  )
-                : "—"}
-            </dd>
-          </div>
-          <div className="flex flex-col gap-1 bg-background p-4">
-            <dt>{t.platformCapacitySampledAt}</dt>
-            <dd className="text-sm font-medium tabular-nums">
-              {capacity?.last_sampled_at
-                ? formatTime(capacity.last_sampled_at, locale)
-                : t.platformCapacityPending}
-            </dd>
-          </div>
-        </dl>
-        <PlatformCapacityTrend history={capacity?.history ?? []} locale={locale} />
-      </CardContent>
-    </Card>
-  )
-}
-
-function PlatformCapacityTrend({
-  history,
-  locale,
-}: {
-  history: ProviderCapacityHistoryPoint[]
-  locale: Locale
-}) {
-  const t = copy[locale]
-  if (!history.length) {
-    return (
-      <>
-        <Separator className="mt-4" />
-        <section className="pt-4" aria-label={t.platformCapacityTrend}>
-          <p className="text-sm font-medium">{t.platformCapacityTrend}</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {t.platformCapacityTrendPending}
-          </p>
-        </section>
-      </>
-    )
-  }
-  const chartConfig = {
-    remaining: {
-      label: t.platformPlusCapacity,
-      color: "var(--chart-2)",
-    },
-  } satisfies ChartConfig
-  const chartData = history.map((point) => ({
-    sampled_at: point.sampled_at,
-    remaining: point.plus_equivalent_remaining_basis_points / 100,
-  }))
-  return (
-    <>
-      <Separator className="mt-4" />
-      <figure className="pt-4">
-        <figcaption className="flex items-baseline justify-between gap-3">
-          <div>
-            <p className="text-sm font-medium">{t.platformCapacityTrend}</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {t.platformCapacityTrendDescription}
-            </p>
-          </div>
-          <span className="shrink-0 text-xs text-muted-foreground">
-            {t.last7Days}
-          </span>
-        </figcaption>
-        <ChartContainer
-          config={chartConfig}
-          className="mt-3 aspect-auto h-40 w-full"
-        >
-          <LineChart accessibilityLayer data={chartData}>
-            <CartesianGrid vertical={false} />
-            <ChartTooltip
-              labelFormatter={(value) => formatTime(Number(value), locale)}
-              formatter={(value) => [
-                `${Number(value).toLocaleString(locale, { maximumFractionDigits: 2 })}%`,
-                t.platformPlusCapacity,
-              ]}
-              contentStyle={{
-                backgroundColor: "var(--popover)",
-                borderColor: "var(--border)",
-                borderRadius: "var(--radius)",
-                color: "var(--popover-foreground)",
-              }}
-              itemStyle={{ color: "var(--popover-foreground)" }}
-            />
-            <XAxis
-              axisLine={false}
-              dataKey="sampled_at"
-              minTickGap={36}
-              tickFormatter={(value) =>
-                formatCapacityTrendTime(Number(value), locale)
-              }
-              tickLine={false}
-              tickMargin={8}
-            />
-            <YAxis
-              axisLine={false}
-              tickFormatter={(value) => `${Number(value).toLocaleString(locale)}%`}
-              tickLine={false}
-              width={72}
-            />
-            <Line
-              dataKey="remaining"
-              dot={false}
-              stroke="var(--color-remaining)"
-              strokeWidth={2}
-              type="monotone"
-            />
-          </LineChart>
-        </ChartContainer>
-      </figure>
-    </>
   )
 }
 
@@ -9680,34 +7466,15 @@ function SettingsPage({
           <Definition
             rows={[
               [t.upstream, data.upstream_base],
-              [t.upstreamOpenaiBeta, data.upstream_openai_beta || "—"],
-              [
-                t.bodyLimit,
-                `${data.response_body_limit} / ${data.image_body_limit} / ${data.audio_body_limit} bytes`,
-              ],
+              [t.bodyLimit, `${data.response_body_limit} bytes`],
               [t.affinityTtl, `${data.affinity_ttl_seconds} s`],
+              [t.pricingModels, data.available_model_ids.join(", ") || "—"],
             ]}
           />
         </CardContent>
       </Card>
       {(user.role === "root" || user.role === "admin") && (
         <>
-          <UpstreamUserAgentSettings
-            sdk={sdk}
-            locale={locale}
-            initial={
-              data.upstream_user_agents || {
-                codex_cli_rs: data.upstream_user_agent,
-                pi: null,
-                opencode: null,
-              }
-            }
-          />
-          <ExperimentalTurnState312FilterSettings
-            sdk={sdk}
-            locale={locale}
-            initial={Boolean(data.experimental_filter_codex_turn_state_312)}
-          />
           <ProviderConcurrencySettings
             sdk={sdk}
             locale={locale}
@@ -9727,168 +7494,6 @@ function SettingsPage({
         </>
       )}
     </div>
-  )
-}
-
-function UpstreamUserAgentSettings({
-  sdk,
-  locale,
-  initial,
-}: {
-  sdk: AuthSdk
-  locale: Locale
-  initial: {
-    codex_cli_rs?: string | null
-    pi?: string | null
-    opencode?: string | null
-  }
-}) {
-  const t = copy[locale]
-  const queryClient = useQueryClient()
-  const [values, setValues] = useState({
-    codex_cli_rs: initial.codex_cli_rs || "",
-    pi: initial.pi || "",
-    opencode: initial.opencode || "",
-  })
-  const [pending, setPending] = useState(false)
-  useEffect(
-    () =>
-      setValues({
-        codex_cli_rs: initial.codex_cli_rs || "",
-        pi: initial.pi || "",
-        opencode: initial.opencode || "",
-      }),
-    [initial]
-  )
-
-  async function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (pending) return
-    setPending(true)
-    try {
-      for (const originator of ["codex_cli_rs", "pi", "opencode"] as const) {
-        await api(sdk, "/api/settings/upstream-user-agent", {
-          method: "PATCH",
-          body: JSON.stringify({
-            originator,
-            user_agent: values[originator],
-          }),
-        })
-      }
-      await queryClient.invalidateQueries({ queryKey: ["/api/settings"] })
-      toast.success(t.settingsSaved)
-    } catch (cause) {
-      toast.error(message(cause, t))
-    } finally {
-      setPending(false)
-    }
-  }
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{t.upstreamUserAgent}</CardTitle>
-        <CardDescription>{t.upstreamUserAgentHint}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={save}>
-          <FieldGroup>
-            {(
-              [
-                ["codex_cli_rs", t.upstreamUserAgentCodex],
-                ["pi", t.upstreamUserAgentPi],
-                ["opencode", t.upstreamUserAgentOpencode],
-              ] as const
-            ).map(([originator, label]) => (
-              <Field data-disabled={pending} key={originator}>
-                <FieldLabel htmlFor={`settings-upstream-user-agent-${originator}`}>
-                  {label}
-                </FieldLabel>
-                <Input
-                  id={`settings-upstream-user-agent-${originator}`}
-                  value={values[originator]}
-                  onChange={(event) =>
-                    setValues((current) => ({
-                      ...current,
-                      [originator]: event.target.value,
-                    }))
-                  }
-                  maxLength={1024}
-                  disabled={pending}
-                />
-              </Field>
-            ))}
-            <Button className="self-start" type="submit" disabled={pending}>
-              {pending && <Spinner data-icon="inline-start" />}
-              {t.saveSettings}
-            </Button>
-          </FieldGroup>
-        </form>
-      </CardContent>
-    </Card>
-  )
-}
-
-function ExperimentalTurnState312FilterSettings({
-  sdk,
-  locale,
-  initial,
-}: {
-  sdk: AuthSdk
-  locale: Locale
-  initial: boolean
-}) {
-  const t = copy[locale]
-  const queryClient = useQueryClient()
-  const [enabled, setEnabled] = useState(initial)
-  const [pending, setPending] = useState(false)
-  useEffect(() => setEnabled(initial), [initial])
-
-  async function update(enabled: boolean) {
-    if (pending) return
-    setPending(true)
-    try {
-      await api(sdk, "/api/settings/experimental-turn-state-312-filter", {
-        method: "PATCH",
-        body: JSON.stringify({ enabled }),
-      })
-      setEnabled(enabled)
-      await queryClient.invalidateQueries({ queryKey: ["/api/settings"] })
-      toast.success(t.settingsSaved)
-    } catch (cause) {
-      toast.error(message(cause, t))
-    } finally {
-      setPending(false)
-    }
-  }
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{t.experimentalTurnState312Filter}</CardTitle>
-        <CardDescription>
-          {t.experimentalTurnState312FilterHint}
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <Field orientation="horizontal" data-disabled={pending}>
-          <FieldContent>
-            <FieldLabel htmlFor="settings-experimental-turn-state-312-filter">
-              {t.experimentalTurnState312Filter}
-            </FieldLabel>
-            <FieldDescription>
-              {t.experimentalTurnState312FilterHint}
-            </FieldDescription>
-          </FieldContent>
-          <Switch
-            id="settings-experimental-turn-state-312-filter"
-            checked={enabled}
-            disabled={pending}
-            onCheckedChange={update}
-          />
-        </Field>
-      </CardContent>
-    </Card>
   )
 }
 
@@ -10169,11 +7774,18 @@ function RuntimeSettings({
   initial: SettingsData
 }) {
   const t = copy[locale]
-  const [settings, setSettings] = useState(initial)
+  const [settings, setSettings] = useState({
+    upstream_base: initial.upstream_base,
+    model_price_multiplier: initial.model_price_multiplier,
+    allow_all_users_debt: initial.allow_all_users_debt,
+    response_body_limit: initial.response_body_limit,
+    affinity_ttl_seconds: initial.affinity_ttl_seconds,
+    request_archive_retention_days: initial.request_archive_retention_days,
+  })
   const [pending, setPending] = useState(false)
-  function update<K extends keyof SettingsData>(
+  function update<K extends keyof typeof settings>(
     key: K,
-    value: SettingsData[K]
+    value: (typeof settings)[K]
   ) {
     setSettings((current) => ({ ...current, [key]: value }))
   }
@@ -10212,39 +7824,7 @@ function RuntimeSettings({
                 }
                 required
               />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="settings-upstream-openai-beta">
-                {t.upstreamOpenaiBeta}
-              </FieldLabel>
-              <Input
-                id="settings-upstream-openai-beta"
-                value={settings.upstream_openai_beta || ""}
-                onChange={(event) =>
-                  update("upstream_openai_beta", event.target.value)
-                }
-                placeholder="responses=experimental"
-                aria-describedby="settings-upstream-openai-beta-hint"
-              />
-              <p
-                id="settings-upstream-openai-beta-hint"
-                className="text-sm text-muted-foreground"
-              >
-                {t.upstreamOpenaiBetaHint}
-              </p>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="settings-image-model">
-                {t.imageHostModel}
-              </FieldLabel>
-              <Input
-                id="settings-image-model"
-                value={settings.image_host_model}
-                onChange={(event) =>
-                  update("image_host_model", event.target.value)
-                }
-                required
-              />
+              <FieldDescription>{t.upstreamHint}</FieldDescription>
             </Field>
             <Field>
               <FieldLabel htmlFor="settings-model-price-multiplier">
@@ -10280,61 +7860,6 @@ function RuntimeSettings({
                 }
               />
             </Field>
-            <Field>
-              <FieldLabel htmlFor="settings-authorize-url">
-                {t.oauthAuthorizeUrl}
-              </FieldLabel>
-              <Input
-                id="settings-authorize-url"
-                type="url"
-                value={settings.oauth_authorize_url}
-                onChange={(event) =>
-                  update("oauth_authorize_url", event.target.value)
-                }
-                required
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="settings-token-url">
-                {t.oauthTokenUrl}
-              </FieldLabel>
-              <Input
-                id="settings-token-url"
-                type="url"
-                value={settings.oauth_token_url}
-                onChange={(event) =>
-                  update("oauth_token_url", event.target.value)
-                }
-                required
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="settings-redirect-uri">
-                {t.oauthRedirectUri}
-              </FieldLabel>
-              <Input
-                id="settings-redirect-uri"
-                type="url"
-                value={settings.oauth_redirect_uri}
-                onChange={(event) =>
-                  update("oauth_redirect_uri", event.target.value)
-                }
-                required
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="settings-client-id">
-                {t.oauthClientId}
-              </FieldLabel>
-              <Input
-                id="settings-client-id"
-                value={settings.oauth_client_id}
-                onChange={(event) =>
-                  update("oauth_client_id", event.target.value)
-                }
-                required
-              />
-            </Field>
             <FieldGroup className="grid gap-4 sm:grid-cols-2">
               <Field>
                 <FieldLabel htmlFor="settings-response-limit">
@@ -10348,38 +7873,6 @@ function RuntimeSettings({
                   value={settings.response_body_limit}
                   onChange={(event) =>
                     update("response_body_limit", event.target.valueAsNumber)
-                  }
-                  required
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="settings-image-limit">
-                  {t.imageLimit}
-                </FieldLabel>
-                <Input
-                  id="settings-image-limit"
-                  type="number"
-                  min={1024}
-                  max={16777216}
-                  value={settings.image_body_limit}
-                  onChange={(event) =>
-                    update("image_body_limit", event.target.valueAsNumber)
-                  }
-                  required
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="settings-audio-limit">
-                  {t.audioLimit}
-                </FieldLabel>
-                <Input
-                  id="settings-audio-limit"
-                  type="number"
-                  min={1048576}
-                  max={2000000000}
-                  value={settings.audio_body_limit}
-                  onChange={(event) =>
-                    update("audio_body_limit", event.target.valueAsNumber)
                   }
                   required
                 />
@@ -10402,9 +7895,7 @@ function RuntimeSettings({
               </Field>
               <Field>
                 <FieldLabel htmlFor="settings-archive-retention">
-                  {locale === "zh"
-                    ? "请求/响应诊断记录保留天数"
-                    : "Request/response diagnostic retention (days)"}
+                  {t.archiveRetention}
                 </FieldLabel>
                 <Input
                   id="settings-archive-retention"
@@ -10910,253 +8401,6 @@ const usageMetrics: UsageMetric[] = [
   "network_transport_bytes",
 ]
 
-type ModelDowngradeAuditResponse = {
-  period: UsagePeriod
-  since: number
-  until: number
-  rows: ModelDowngradeRow[]
-}
-
-function ModelDowngradeAuditPage({
-  sdk,
-  locale,
-}: {
-  sdk: AuthSdk
-  locale: Locale
-}) {
-  const t = copy[locale]
-  const [period, setPeriod] = useState<UsagePeriod>("7d")
-  const [providerFilter, setProviderFilter] = useState("all")
-  const { data, error, loading, refreshing, reload } =
-    useApiQuery<ModelDowngradeAuditResponse>(
-      sdk,
-      "/api/model-downgrade-audit?period=" + period
-    )
-  const rows = useMemo(() => data?.rows ?? [], [data])
-  const providerOptions = useMemo(
-    () =>
-      [
-        ...new Map(
-          rows.map((row) => [
-            row.provider_id ?? unknownProviderId,
-            row.provider_name ?? t.providerAuditUnknownProvider,
-          ])
-        ),
-      ].sort((left, right) => left[1].localeCompare(right[1], locale)),
-    [locale, rows, t.providerAuditUnknownProvider]
-  )
-  const flows = useMemo(
-    () => modelDowngradeFlows(rows, providerFilter),
-    [providerFilter, rows]
-  )
-  const sankey = useMemo(
-    () => modelDowngradeSankey(flows, t.providerAuditUnknownProvider),
-    [flows, t.providerAuditUnknownProvider]
-  )
-  const ratePoints = useMemo(
-    () =>
-      data
-        ? modelDowngradeRatePoints(rows, providerFilter, data.since, data.until)
-        : [],
-    [data, providerFilter, rows]
-  )
-  const totals = useMemo(
-    () =>
-      flows.reduce(
-        (summary, flow) => ({
-          requests: summary.requests + flow.requests,
-          downgraded:
-            summary.downgraded + (isModelDowngrade(flow) ? flow.requests : 0),
-        }),
-        { requests: 0, downgraded: 0 }
-      ),
-    [flows]
-  )
-  const downgradeRate = totals.requests
-    ? totals.downgraded / totals.requests
-    : 0
-  const chartConfig = {
-    downgrade_rate: {
-      label: t.modelDowngradeRate,
-      color: "var(--destructive)",
-    },
-  } satisfies ChartConfig
-
-  if (loading) return <LoadingTable />
-  if (error) return <ErrorState message={error} />
-  return (
-    <div className="flex flex-col gap-5">
-      <Card>
-        <CardHeader className="flex-row items-start justify-between gap-3">
-          <div>
-            <CardTitle>{t.modelDowngradeTitle}</CardTitle>
-            <CardDescription>{t.modelDowngradeDescription}</CardDescription>
-          </div>
-          <Button
-            variant="outline"
-            disabled={refreshing}
-            onClick={() => void reload()}
-          >
-            {refreshing ? (
-              <Spinner data-icon="inline-start" />
-            ) : (
-              <RefreshCwIcon data-icon="inline-start" />
-            )}
-            {t.refresh}
-          </Button>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-5">
-          <div className="grid gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-3">
-            <div className="bg-background p-4">
-              <dt>{t.modelDowngradeAuditedRequests}</dt>
-              <dd className="mt-1 text-2xl font-semibold tabular-nums">
-                {totals.requests.toLocaleString(locale)}
-              </dd>
-            </div>
-            <div className="bg-background p-4">
-              <dt>{t.modelDowngradeDowngradedRequests}</dt>
-              <dd className="mt-1 text-2xl font-semibold tabular-nums">
-                {totals.downgraded.toLocaleString(locale)}
-              </dd>
-            </div>
-            <div className="bg-background p-4">
-              <dt>{t.modelDowngradeRate}</dt>
-              <dd className="mt-1 text-2xl font-semibold tabular-nums">
-                {formatPercent(downgradeRate * 100, locale)}
-              </dd>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-3 border-t pt-4">
-            <Tabs
-              value={period}
-              onValueChange={(value) => value && setPeriod(value as UsagePeriod)}
-            >
-              <TabsList aria-label={t.modelDowngradePeriod}>
-                <TabsTrigger value="7d">{t.last7Days}</TabsTrigger>
-                <TabsTrigger value="24h">{t.last24Hours}</TabsTrigger>
-              </TabsList>
-            </Tabs>
-            <UsageSelect
-              id="model-downgrade-audit-provider-filter"
-              label={t.provider}
-              value={providerFilter}
-              onValueChange={setProviderFilter}
-              allLabel={t.providerAuditAllProviders}
-              options={providerOptions}
-            />
-          </div>
-          {!flows.length ? (
-            <EmptyState
-              icon={<WorkflowIcon />}
-              title={t.modelDowngradeNoData}
-              description={t.modelDowngradeNoDataDescription}
-            />
-          ) : (
-            <div className="flex flex-col gap-8">
-              <figure>
-                <figcaption className="mb-3 text-sm font-medium">
-                  {t.modelDowngradeFlowChart}
-                </figcaption>
-                <ModelDowngradeSankey
-                  config={chartConfig}
-                  downgradedLabel={t.modelDowngradeDowngraded}
-                  links={sankey.links}
-                  locale={locale}
-                  nodes={sankey.nodes}
-                  requestsLabel={t.requests}
-                />
-                <p className="mt-3 text-xs text-muted-foreground">
-                  {t.modelDowngradeFlowDescription}
-                </p>
-              </figure>
-              <figure>
-                <figcaption className="mb-3 text-sm font-medium">
-                  {t.modelDowngradeRateChart}
-                </figcaption>
-                <ModelDowngradeRateChart
-                  config={chartConfig}
-                  locale={locale}
-                  points={ratePoints}
-                  rateLabel={t.modelDowngradeRate}
-                />
-                <p className="mt-3 text-xs text-muted-foreground">
-                  {t.modelDowngradeRateDescription}
-                </p>
-              </figure>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle>{t.modelDowngradeTitle}</CardTitle>
-          <CardDescription>{t.modelDowngradeTableDescription}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {!flows.length ? (
-            <EmptyState
-              icon={<WorkflowIcon />}
-              title={t.modelDowngradeNoData}
-              description={t.modelDowngradeNoDataDescription}
-            />
-          ) : (
-            <DataTable>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{t.provider}</TableHead>
-                    <TableHead>{t.modelDowngradeUpstreamModel}</TableHead>
-                    <TableHead>{t.modelDowngradeDownstreamModel}</TableHead>
-                    <TableHead className="text-right">{t.requests}</TableHead>
-                    <TableHead>{t.status}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {flows.map((flow) => (
-                    <TableRow
-                      key={[
-                        flow.provider_id ?? unknownProviderId,
-                        flow.upstream_model,
-                        flow.downstream_model,
-                      ].join("-")}
-                    >
-                      <TableCell>
-                        <code>
-                          {flow.provider_name ?? t.providerAuditUnknownProvider}
-                        </code>
-                      </TableCell>
-                      <TableCell>
-                        <code>{flow.upstream_model}</code>
-                      </TableCell>
-                      <TableCell>
-                        <code>{flow.downstream_model}</code>
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {flow.requests.toLocaleString(locale)}
-                      </TableCell>
-                      <TableCell>
-                        {isModelDowngrade(flow) ? (
-                          <Badge variant="destructive">
-                            {t.modelDowngradeDowngraded}
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline">
-                            {t.modelDowngradeConsistent}
-                          </Badge>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </DataTable>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  )
-}
-
 function usageConsumerLabel(row: UsageRow) {
   return `${row.consumer_name} · ${row.consumer_prefix}…`
 }
@@ -11310,51 +8554,6 @@ function StatusBadge({ status, locale }: { status: string; locale: Locale }) {
     </Badge>
   )
 }
-function ProviderCircuitStatus({
-  event,
-  locale,
-  provider,
-  onOpenHistory,
-}: {
-  event?: ProviderCircuitEvent
-  locale: Locale
-  provider: Provider
-  onOpenHistory: () => void
-}) {
-  const t = copy[locale]
-  const open = provider.status === "cooldown"
-  const deadline = provider.cooldown_until ?? event?.cooldown_until
-  return (
-    <div className="flex min-w-0 flex-col items-start gap-1">
-      <Badge variant={open ? "destructive" : "secondary"}>
-        {open ? <ShieldAlertIcon /> : <CheckCircle2Icon />}
-        {open
-          ? t.circuitOpen
-          : event?.closed_at
-            ? t.circuitRecovered
-            : t.circuitNeverOpened}
-      </Badge>
-      {open ? (
-        <span className="text-xs text-muted-foreground tabular-nums">
-          {t.circuitUntil}: {formatTime(deadline, locale)}
-        </span>
-      ) : event?.closed_at ? (
-        <span className="text-xs text-muted-foreground tabular-nums">
-          {t.circuitClosedAt}: {formatTime(event.closed_at, locale)}
-        </span>
-      ) : null}
-      {open && provider.last_error && (
-        <span className="text-xs break-words text-muted-foreground">
-          {provider.last_error}
-        </span>
-      )}
-      <Button size="sm" variant="link" onClick={onOpenHistory}>
-        <ScrollTextIcon data-icon="inline-start" />
-        {t.circuitHistory}
-      </Button>
-    </div>
-  )
-}
 function DataTable({ children }: { children: ReactNode }) {
   return (
     <ScrollArea className="w-full whitespace-nowrap">
@@ -11440,16 +8639,6 @@ function currentMessages() {
 }
 function message(cause: unknown, t = currentMessages()) {
   if (cause instanceof Error) {
-    const reason = (cause as Error & { reason?: string }).reason
-    if (reason === "image_data_missing") {
-      const detail = cause.message
-        .replace(
-          /^Image generation failed: the upstream provider did not return image data\.\s*/i,
-          ""
-        )
-        .trim()
-      return `${t.imageGenerationFailed} ${t.imageGenerationRetry}${detail ? ` ${t.imageGenerationDetail}: ${detail}` : ""}`
-    }
     return cause.message
   }
   return t.unknownError
@@ -11457,50 +8646,13 @@ function message(cause: unknown, t = currentMessages()) {
 function isAbortError(cause: unknown) {
   return cause instanceof DOMException && cause.name === "AbortError"
 }
-function formatTime(timestamp: RateLimitResetTimestamp, locale: Locale) {
-  const seconds = rateLimitResetTimestampSeconds(timestamp)
-  return seconds === undefined
+function formatTime(timestamp: number | undefined, locale: Locale) {
+  return timestamp === undefined || timestamp === null
     ? "—"
     : new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
         dateStyle: "short",
         timeStyle: "medium",
-      }).format(seconds * 1000)
-}
-function formatCapacityTrendTime(timestamp: number, locale: Locale) {
-  return new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(timestamp * 1000)
-}
-function formatCircuitRateLimitHeaders(value: string) {
-  try {
-    return JSON.stringify(JSON.parse(value), null, 2)
-  } catch {
-    return value
-  }
-}
-function formatRateLimitResetTimeRemaining(timestamp: number, locale: Locale) {
-  const seconds = Math.max(0, timestamp - Math.floor(Date.now() / 1000))
-  const days = Math.floor(seconds / 86400)
-  const hours = Math.floor((seconds % 86400) / 3600)
-  const minutes = Math.floor((seconds % 3600) / 60)
-  return locale === "zh"
-    ? `${days ? `${days}天` : ""}${hours}小时${minutes}分`
-    : `${days ? `${days}d ` : ""}${hours}h ${minutes}m`
-}
-function formatRateLimitResetExpiryTime(timestamp: number, locale: Locale) {
-  return new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    timeZone: "Asia/Shanghai",
-    timeZoneName: "short",
-  }).format(timestamp * 1000)
+      }).format(timestamp * 1000)
 }
 function formatStorageBytes(bytes: number, locale: Locale) {
   const units = ["B", "KiB", "MiB", "GiB", "TiB"]
@@ -11567,65 +8719,6 @@ function inputOutputRatio(inputTokens: number, outputTokens: number, locale: Loc
   })}:1`
 }
 
-function usageEmail(usage: ProviderUsage | undefined) {
-  return usage?.email ?? usage?.account_email ?? usage?.account?.email
-}
-function quotaPercent(window: UsageWindow | undefined) {
-  return typeof window?.used_percent === "number"
-    ? Math.max(0, Math.min(100, 100 - window.used_percent))
-    : undefined
-}
-function formatPlusEquivalentCapacity(
-  remainingBasisPoints: number,
-  locale: Locale
-) {
-  return `${(remainingBasisPoints / 100).toLocaleString(locale, {
-    maximumFractionDigits: 2,
-  })}%`
-}
-function remainingPercent(window: UsageWindow | undefined) {
-  const percent = quotaPercent(window)
-  return percent === undefined ? "—" : `${percent.toFixed(1)}%`
-}
-function quotaReset(window: UsageWindow | undefined, locale: Locale) {
-  const seconds = window?.reset_at
-    ? Math.max(0, window.reset_at - Math.floor(Date.now() / 1000))
-    : window?.reset_after_seconds
-  if (typeof seconds !== "number") return "—"
-  const hours = Math.floor(seconds / 3600)
-  const minutes = Math.floor((seconds % 3600) / 60)
-  return locale === "zh" ? `${hours}小时${minutes}分` : `${hours}h ${minutes}m`
-}
-function QuotaProgress({
-  window,
-  label,
-  unavailable,
-}: {
-  window: UsageWindow | undefined
-  label: string
-  unavailable?: string
-}) {
-  const percent = quotaPercent(window)
-  if (percent === undefined)
-    return (
-      <span className="text-xs text-muted-foreground" title={unavailable}>
-        —
-      </span>
-    )
-  return (
-    <div className="flex min-w-28 items-center gap-2">
-      <progress
-        aria-label={label}
-        className="h-2 w-20 accent-primary"
-        value={percent}
-        max={100}
-      >
-        {percent.toFixed(1)}%
-      </progress>
-      <span className="text-xs tabular-nums">{percent.toFixed(1)}%</span>
-    </div>
-  )
-}
 function roleLabel(role: User["role"], locale: Locale) {
   const t = copy[locale]
   return role === "root"
@@ -11657,9 +8750,6 @@ function pageForPath(pathname: string): Page {
         "/dsh-integration": "dsh-integration",
         "/opencode-integration": "opencode-integration",
         "/direct-api-integration": "direct-api-integration",
-        "/transcriptions": "transcriptions",
-        "/realtime": "realtime",
-        "/images": "images",
         "/usage": "usage",
         "/audit": "audit",
         "/topups": "topups",
@@ -11667,7 +8757,6 @@ function pageForPath(pathname: string): Page {
         "/system-resources": "system-resources",
         "/admin-audit": "admin-audit",
         "/provider-audit": "provider-audit",
-        "/model-downgrade-audit": "model-downgrade-audit",
         "/users": "users",
         "/settings": "settings",
       } as const
@@ -11688,9 +8777,6 @@ function pageDescription(page: Page, locale: Locale) {
     "dsh-integration": t.pageDshIntegration,
     "opencode-integration": t.pageOpenCodeIntegration,
     "direct-api-integration": t.pageDirectApiIntegration,
-    transcriptions: t.pageTranscriptions,
-    realtime: t.pageRealtime,
-    images: t.pageImages,
     usage: t.pageUsage,
     audit: t.pageAudit,
     topups: t.pageTopups,
@@ -11698,7 +8784,6 @@ function pageDescription(page: Page, locale: Locale) {
     "system-resources": t.pageSystemResources,
     "admin-audit": t.pageAdminAudit,
     "provider-audit": t.pageProviderAudit,
-    "model-downgrade-audit": t.pageModelDowngradeAudit,
     "request-detail": t.pageRequestDetail,
     users: t.pageUsers,
     settings: t.pageSettings,

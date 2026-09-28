@@ -1,13 +1,6 @@
 import { parse } from "smol-toml"
 
-const providerId = "ntnl-openai"
-
-const providerSettings = [
-  ["name", "NTNL OpenAI"],
-  ["base_url", "https://deepseek.ntnl.io/v1"],
-  ["experimental_bearer_token", undefined],
-  ["wire_api", "responses"],
-] as const
+const providerId = "deepseek-lb"
 
 export type CodexPlatform = "linux" | "macos" | "windows" | "other"
 
@@ -22,13 +15,36 @@ export function codexPlatform(userAgent: string): CodexPlatform {
   return "other"
 }
 
-export function updateCodexConfig(content: string, token: string) {
+// Codex talks to models through the Responses API, which DeepSeek serves natively.
+export function codexProviderSettings(origin: string, token: string) {
+  return [
+    ["name", "DeepSeek-LB"],
+    ["base_url", `${origin}/v1`],
+    ["wire_api", "responses"],
+    ["experimental_bearer_token", token],
+  ] as const
+}
+
+export function codexProviderBlock(origin: string, token: string) {
+  const settings = codexProviderSettings(origin, token)
+    .map(([key, value]) => `${key} = ${tomlString(value)}`)
+    .join("\n")
+
+  return `model_provider = "${providerId}"
+
+[model_providers.${providerId}]
+${settings}
+`
+}
+
+export function updateCodexConfig(content: string, token: string, origin: string) {
   if (!isConsumerToken(token)) {
     throw new Error(
       "Consumer token must start with sk- and contain no whitespace."
     )
   }
   parse(content)
+  const settings = codexProviderSettings(origin, token)
 
   const newline = content.includes("\r\n") ? "\r\n" : "\n"
   const lines = content === "" ? [] : content.split(/\r?\n/u)
@@ -42,24 +58,24 @@ export function updateCodexConfig(content: string, token: string) {
     )
   }
   if (modelProviderLines.length === 1) {
-    lines[modelProviderLines[0]] = 'model_provider = "ntnl-openai"'
+    lines[modelProviderLines[0]] = `model_provider = "${providerId}"`
   } else {
-    lines.splice(rootEnd, 0, 'model_provider = "ntnl-openai"')
+    lines.splice(rootEnd, 0, `model_provider = "${providerId}"`)
   }
 
   const updatedRootEnd = firstTableHeader(lines)
   if (keyLines(lines, "model_providers", 0, updatedRootEnd).length > 0) {
     throw new Error("config.toml uses an inline model_providers setting.")
   }
-  if (lines.some(isOpenAiLbProviderArrayHeader)) {
+  if (lines.some(isDeepSeekLbProviderArrayHeader)) {
     throw new Error("config.toml uses an array of DeepSeek-LB providers.")
   }
 
-  const providerHeader = lines.findIndex(isOpenAiLbProviderHeader)
+  const providerHeader = lines.findIndex(isDeepSeekLbProviderHeader)
   if (providerHeader === -1) {
-    appendProviderTable(lines, token)
+    appendProviderTable(lines, settings)
   } else {
-    updateProviderTable(lines, providerHeader, token)
+    updateProviderTable(lines, providerHeader, settings)
   }
 
   return `${lines.join(newline)}${newline}`
@@ -74,14 +90,14 @@ function isTableHeader(line: string) {
   return /^\s*\[\[?[^\]]+\]\]?\s*(?:#.*)?$/u.test(line)
 }
 
-function isOpenAiLbProviderHeader(line: string) {
-  return /^\s*\[\s*model_providers\s*\.\s*ntnl-openai\s*\]\s*(?:#.*)?$/u.test(
+function isDeepSeekLbProviderHeader(line: string) {
+  return /^\s*\[\s*model_providers\s*\.\s*deepseek-lb\s*\]\s*(?:#.*)?$/u.test(
     line
   )
 }
 
-function isOpenAiLbProviderArrayHeader(line: string) {
-  return /^\s*\[\[\s*model_providers\s*\.\s*ntnl-openai\s*\]\]\s*(?:#.*)?$/u.test(
+function isDeepSeekLbProviderArrayHeader(line: string) {
+  return /^\s*\[\[\s*model_providers\s*\.\s*deepseek-lb\s*\]\]\s*(?:#.*)?$/u.test(
     line
   )
 }
@@ -93,18 +109,21 @@ function keyLines(lines: string[], key: string, start: number, end: number) {
   )
 }
 
-function appendProviderTable(lines: string[], token: string) {
+function appendProviderTable(
+  lines: string[],
+  settings: readonly (readonly [string, string])[]
+) {
   if (lines.length > 0 && lines.at(-1)?.trim() !== "") lines.push("")
   lines.push(`[model_providers.${providerId}]`)
-  for (const [key, value] of providerSettings) {
-    lines.push(`${key} = ${tomlString(value ?? token)}`)
+  for (const [key, value] of settings) {
+    lines.push(`${key} = ${tomlString(value)}`)
   }
 }
 
 function updateProviderTable(
   lines: string[],
   providerHeader: number,
-  token: string
+  settings: readonly (readonly [string, string])[]
 ) {
   const nextTable = lines.findIndex(
     (line, index) => index > providerHeader && isTableHeader(line)
@@ -112,15 +131,15 @@ function updateProviderTable(
   const tableEnd = nextTable === -1 ? lines.length : nextTable
   const missing: string[] = []
 
-  for (const [key, value] of providerSettings) {
+  for (const [key, value] of settings) {
     const matches = keyLines(lines, key, providerHeader + 1, tableEnd)
     if (matches.length > 1) {
       throw new Error(`config.toml contains more than one ${key} setting.`)
     }
     if (matches.length === 1) {
-      lines[matches[0]] = `${key} = ${tomlString(value ?? token)}`
+      lines[matches[0]] = `${key} = ${tomlString(value)}`
     } else {
-      missing.push(`${key} = ${tomlString(value ?? token)}`)
+      missing.push(`${key} = ${tomlString(value)}`)
     }
   }
 

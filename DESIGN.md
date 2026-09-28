@@ -1,6 +1,6 @@
 ---
 name: DeepSeek-LB
-description: Calm, precise operations console for the CodeX OAuth load balancer
+description: Calm, precise operations console for the DeepSeek API load balancer
 colors:
   background: "oklch(1 0 0)"
   foreground: "oklch(0.145 0 0)"
