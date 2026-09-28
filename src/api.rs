@@ -1873,3 +1873,528 @@ async fn write_admin_audit(
     .await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use axum::extract::Query;
+
+    use super::*;
+
+    fn root_identity() -> UserIdentity {
+        UserIdentity {
+            id: "root".to_owned(),
+            email: None,
+            name: None,
+            role: "root".to_owned(),
+        }
+    }
+
+    fn user_identity() -> UserIdentity {
+        UserIdentity {
+            id: "user".to_owned(),
+            email: None,
+            name: None,
+            role: "user".to_owned(),
+        }
+    }
+
+    fn peer() -> ConnectInfo<SocketAddr> {
+        ConnectInfo("127.0.0.1:8080".parse().unwrap())
+    }
+
+    async fn seed_users(state: &AppState) {
+        for (id, role) in [("root", "root"), ("user", "user")] {
+            sqlx::query("INSERT INTO users(id,role,created_at) VALUES(?,?,0)")
+                .bind(id)
+                .bind(role)
+                .execute(&state.db)
+                .await
+                .unwrap();
+        }
+    }
+
+    async fn seed_consumer(state: &AppState, id: &str, owner: &str, secret: &str) {
+        sqlx::query("INSERT INTO consumers(id,user_id,name,prefix,secret_hash,created_at) VALUES(?,?,?,?,?,0)")
+            .bind(id)
+            .bind(owner)
+            .bind(id)
+            .bind(id)
+            .bind(consumer_secret_hash(secret))
+            .execute(&state.db)
+            .await
+            .unwrap();
+    }
+
+    async fn seed_provider(state: &AppState, id: &str, owner: &str) {
+        sqlx::query("INSERT INTO providers(id,name,api_key,status,created_at,updated_at,owner_id,visibility) VALUES(?,?,?,'active',0,0,?,?)")
+            .bind(id)
+            .bind(id)
+            .bind(format!("sk-{id}"))
+            .bind(owner)
+            .bind(balancer::PROVIDER_VISIBILITY_PRIVATE)
+            .execute(&state.db)
+            .await
+            .unwrap();
+        state.balancer.reload_providers(&state.db).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn provider_lifecycle_round_trips_one_api_key() {
+        let state = crate::test_state("http://upstream.invalid").await;
+        seed_users(&state).await;
+
+        let created = create_provider(
+            State(state.clone()),
+            peer(),
+            Extension(root_identity()),
+            Json(CreateProvider {
+                name: "primary".to_owned(),
+                api_key: "sk-deepseek-primary".to_owned(),
+                visibility: Some("public".to_owned()),
+            }),
+        )
+        .await
+        .unwrap();
+        let id = created.0["id"].as_str().unwrap().to_owned();
+        assert_eq!(created.0["visibility"], "public");
+
+        let listed = list_providers(State(state.clone()), Extension(root_identity()))
+            .await
+            .unwrap();
+        let provider = &listed.0[0];
+        assert_eq!(provider["name"], "primary");
+        assert_eq!(
+            provider["api_key"],
+            json!(null),
+            "the key never leaves the server"
+        );
+        assert_eq!(provider["usage"], json!(null));
+
+        let _ = update_provider(
+            State(state.clone()),
+            peer(),
+            Extension(root_identity()),
+            Path(id.clone()),
+            Json(ProviderUpdate {
+                name: Some("renamed".to_owned()),
+                enabled: Some(false),
+                visibility: Some("private".to_owned()),
+            }),
+        )
+        .await
+        .unwrap();
+        let (name, status, disabled, visibility): (String, String, i64, String) = sqlx::query_as(
+            "SELECT name,status,manual_disabled,visibility FROM providers WHERE id=?",
+        )
+        .bind(&id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+        assert_eq!(name, "renamed");
+        assert_eq!(status, "disabled");
+        assert_eq!(disabled, 1);
+        assert_eq!(visibility, "private");
+
+        let (headers, key) = read_provider_key(
+            State(state.clone()),
+            peer(),
+            Extension(root_identity()),
+            Path(id.clone()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(headers.get(header::CACHE_CONTROL).unwrap(), "no-store");
+        assert_eq!(key.0["api_key"], "sk-deepseek-primary");
+
+        let _ = replace_provider_key(
+            State(state.clone()),
+            peer(),
+            Extension(root_identity()),
+            Path(id.clone()),
+            Json(ReplaceProviderKey {
+                name: None,
+                api_key: "sk-deepseek-rotated".to_owned(),
+            }),
+        )
+        .await
+        .unwrap();
+        let (api_key, status, disabled): (String, String, i64) =
+            sqlx::query_as("SELECT api_key,status,manual_disabled FROM providers WHERE id=?")
+                .bind(&id)
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        assert_eq!(api_key, "sk-deepseek-rotated");
+        assert_eq!(
+            status, "disabled",
+            "a manual disable survives a key rotation"
+        );
+        assert_eq!(disabled, 1);
+
+        let _ = delete_provider(
+            State(state.clone()),
+            peer(),
+            Extension(root_identity()),
+            Path(id.clone()),
+        )
+        .await
+        .unwrap();
+        let deleted: i64 = sqlx::query_scalar("SELECT is_deleted FROM providers WHERE id=?")
+            .bind(&id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(deleted, 1);
+        let listed = list_providers(State(state.clone()), Extension(root_identity()))
+            .await
+            .unwrap();
+        assert!(listed.0.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn provider_usage_and_load_are_reported_per_provider() {
+        let state = crate::test_state("http://upstream.invalid").await;
+        seed_users(&state).await;
+        seed_consumer(&state, "consumer", "user", "sk-consumer").await;
+        seed_provider(&state, "provider", "user").await;
+        for (id, peak, tokens, cost, error) in [
+            ("first", 1_i64, 10_i64, 5_i64, None),
+            ("second", 0, 20, 7, Some("boom")),
+        ] {
+            sqlx::query("INSERT INTO api_calls(id,request_id,consumer_id,user_id,provider_id,method,path,model,peak,status,latency_ms,input_tokens,output_tokens,actual_cost_usd_nanos,error,created_at) VALUES(?,?, 'consumer','user','provider','POST','/v1/chat/completions','deepseek-flash',?,200,10,?,0,?,?,unixepoch())")
+                .bind(id)
+                .bind(id)
+                .bind(peak)
+                .bind(tokens)
+                .bind(cost)
+                .bind(error)
+                .execute(&state.db)
+                .await
+                .unwrap();
+        }
+
+        let listed = list_providers(State(state.clone()), Extension(user_identity()))
+            .await
+            .unwrap();
+        let usage = &listed.0[0]["usage"];
+        assert_eq!(usage["requests"], 2);
+        assert_eq!(usage["errors"], 1);
+        assert_eq!(usage["peak_requests"], 1);
+        assert_eq!(usage["input_tokens"], 30);
+        assert_eq!(usage["actual_cost_usd_nanos"], 12);
+        assert_eq!(listed.0[0]["inflight"], 0);
+        assert_eq!(listed.0[0]["queued"], 0);
+        assert_eq!(listed.0[0]["concurrency_limit"], 3);
+
+        // Another user never sees a private provider of someone else.
+        sqlx::query("INSERT INTO users(id,role,created_at) VALUES('other','user',0)")
+            .execute(&state.db)
+            .await
+            .unwrap();
+        let hidden = list_providers(
+            State(state.clone()),
+            Extension(UserIdentity {
+                id: "other".to_owned(),
+                email: None,
+                name: None,
+                role: "user".to_owned(),
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(hidden.0.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn consumer_lifecycle_never_carries_the_degradation_switch() {
+        let state = crate::test_state("http://upstream.invalid").await;
+        seed_users(&state).await;
+
+        let created = create_consumer(
+            State(state.clone()),
+            Extension(user_identity()),
+            Json(CreateConsumer {
+                name: "app".to_owned(),
+                request_archive: true,
+            }),
+        )
+        .await
+        .unwrap();
+        let id = created.0["id"].as_str().unwrap().to_owned();
+        let secret = created.0["secret"].as_str().unwrap().to_owned();
+        assert!(secret.starts_with("sk-"));
+        assert_eq!(created.0["is_disabled"], false);
+
+        let verified = verify_consumer_credential(
+            State(state.clone()),
+            Extension(user_identity()),
+            Path(id.clone()),
+            Json(VerifyConsumerCredential {
+                secret: secret.clone(),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(verified.0["credential_matches"], true);
+        assert_eq!(verified.0["request_archive"], true);
+
+        let _ = update_consumer(
+            State(state.clone()),
+            Extension(user_identity()),
+            Path(id.clone()),
+            Json(UpdateConsumer {
+                name: Some("app-2".to_owned()),
+                request_archive: Some(false),
+                is_disabled: Some(true),
+            }),
+        )
+        .await
+        .unwrap();
+        let listed = list_consumers(State(state.clone()), Extension(user_identity()))
+            .await
+            .unwrap();
+        assert_eq!(listed.0[0]["name"], "app-2");
+        assert_eq!(listed.0[0]["is_disabled"], true);
+
+        let rotated = rotate_consumer(
+            State(state.clone()),
+            Extension(user_identity()),
+            Path(id.clone()),
+        )
+        .await
+        .unwrap();
+        assert_ne!(rotated.0["secret"], secret);
+        let old_secret_matches: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM consumers WHERE id=? AND secret_hash=?")
+                .bind(&id)
+                .bind(consumer_secret_hash(&secret))
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        assert_eq!(old_secret_matches, 0);
+
+        let _ = delete_consumer(
+            State(state.clone()),
+            Extension(user_identity()),
+            Path(id.clone()),
+        )
+        .await
+        .unwrap();
+        let deleted: i64 = sqlx::query_scalar("SELECT is_deleted FROM consumers WHERE id=?")
+            .bind(&id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(deleted, 1);
+    }
+
+    #[tokio::test]
+    async fn settings_updates_persist_into_app_meta_and_config() {
+        let state = crate::test_state("http://upstream.invalid").await;
+        seed_users(&state).await;
+
+        let _ = update_settings(
+            State(state.clone()),
+            peer(),
+            Extension(root_identity()),
+            Json(UpdateSettings {
+                upstream_base: "https://api.deepseek.com/".to_owned(),
+                allow_all_users_debt: true,
+                response_body_limit: 4_194_304,
+                affinity_ttl_seconds: 7_200,
+                request_archive_retention_days: 3,
+                model_price_multiplier: "1.2".to_owned(),
+            }),
+        )
+        .await
+        .unwrap();
+        let config = state.config.load_full();
+        assert_eq!(config.upstream_base, "https://api.deepseek.com");
+        assert!(config.allow_all_users_debt);
+        assert_eq!(config.response_body_limit, 4_194_304);
+        assert_eq!(config.affinity_ttl_seconds, 7_200);
+        assert_eq!(config.request_archive_retention_days, 3);
+        assert_eq!(config.model_price_multiplier_nanos, 1_200_000_000);
+
+        let _ = update_available_model_ids(
+            State(state.clone()),
+            peer(),
+            Extension(root_identity()),
+            Json(UpdateAvailableModelIds {
+                available_model_ids: vec![
+                    " deepseek-flash ".to_owned(),
+                    "deepseek-v4-pro".to_owned(),
+                ],
+            }),
+        )
+        .await
+        .unwrap();
+        let stored: String =
+            sqlx::query_scalar("SELECT value FROM app_meta WHERE key='available_model_ids'")
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        assert_eq!(stored, r#"["deepseek-flash","deepseek-v4-pro"]"#);
+        assert_eq!(
+            state.config.load().available_model_ids,
+            vec!["deepseek-flash".to_owned(), "deepseek-v4-pro".to_owned()]
+        );
+
+        let _ = update_provider_concurrency(
+            State(state.clone()),
+            peer(),
+            Extension(root_identity()),
+            Json(UpdateProviderConcurrency {
+                provider_concurrency_limit: 8,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(state.config.load().provider_concurrency_limit, 8);
+        let audit_actions: Vec<String> =
+            sqlx::query_scalar("SELECT action FROM admin_audit ORDER BY created_at, action")
+                .fetch_all(&state.db)
+                .await
+                .unwrap();
+        assert_eq!(
+            audit_actions,
+            vec![
+                "settings.available_models.update",
+                "settings.provider_concurrency.update",
+                "settings.update",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn audit_rows_expose_peak_pricing_and_filters() {
+        let state = crate::test_state("http://upstream.invalid").await;
+        seed_users(&state).await;
+        seed_consumer(&state, "consumer", "user", "sk-consumer").await;
+        seed_provider(&state, "provider", "user").await;
+        for (id, peak) in [("peak-call", 1_i64), ("off-peak-call", 0)] {
+            sqlx::query("INSERT INTO api_calls(id,request_id,consumer_id,user_id,provider_id,method,path,model,peak,status,latency_ms,actual_cost_usd_nanos,created_at) VALUES(?,?, 'consumer','user','provider','POST','/v1/chat/completions','deepseek-flash',?,200,10,7,unixepoch())")
+                .bind(id)
+                .bind(id)
+                .bind(peak)
+                .execute(&state.db)
+                .await
+                .unwrap();
+        }
+
+        let listed = audit(
+            State(state.clone()),
+            Extension(user_identity()),
+            Query(AuditQuery {
+                limit: None,
+                offset: None,
+                user_id: None,
+                consumer: None,
+                provider: Some("provider".to_owned()),
+                model: Some("deepseek-flash".to_owned()),
+                status: None,
+                error_code: None,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed.0["total"], 2);
+        let rows = listed.0["rows"].as_array().unwrap();
+        assert_eq!(rows[0]["peak"], true, "newest row first");
+        assert_eq!(rows[0]["provider_name"], "provider");
+        assert_eq!(rows[1]["peak"], false);
+
+        let errors = audit(
+            State(state.clone()),
+            Extension(user_identity()),
+            Query(AuditQuery {
+                limit: None,
+                offset: None,
+                user_id: None,
+                consumer: None,
+                provider: None,
+                model: None,
+                status: Some(AuditStatus::Error),
+                error_code: None,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(errors.0["total"], 0);
+
+        let dashboard = dashboard(State(state.clone()), Extension(user_identity()))
+            .await
+            .unwrap();
+        assert_eq!(dashboard.0["calls_24h"], 2);
+        assert_eq!(dashboard.0["peak_calls_24h"], 1);
+        assert_eq!(
+            dashboard.0["active_providers"], 1,
+            "the caller owns one provider"
+        );
+        assert_eq!(dashboard.0["available_model_ids"][0], "deepseek-flash");
+    }
+
+    #[tokio::test]
+    async fn model_prices_only_list_available_models() {
+        let state = crate::test_state("http://upstream.invalid").await;
+        sqlx::query(
+            "UPDATE app_meta SET value='[\"deepseek-v4-pro\"]' WHERE key='available_model_ids'",
+        )
+        .execute(&state.db)
+        .await
+        .unwrap();
+        let mut config = (**state.config.load()).clone();
+        config.available_model_ids = vec!["deepseek-v4-pro".to_owned()];
+        state.config.store(std::sync::Arc::new(config));
+
+        let prices = model_prices(State(state.clone())).await;
+        let rows = prices.0["rows"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["model"], "deepseek-v4-pro");
+        assert!(
+            rows[0]["peak"]["cache_hit_usd_nanos"].as_i64().unwrap()
+                < rows[0]["peak"]["cache_miss_usd_nanos"].as_i64().unwrap()
+        );
+        assert!(
+            rows[0]["off_peak"]["output_usd_nanos"].as_i64().unwrap()
+                < rows[0]["peak"]["output_usd_nanos"].as_i64().unwrap(),
+            "off-peak is cheaper than peak"
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_audit_groups_requests_by_hour_and_provider() {
+        let state = crate::test_state("http://upstream.invalid").await;
+        seed_users(&state).await;
+        seed_consumer(&state, "consumer", "user", "sk-consumer").await;
+        seed_provider(&state, "provider", "user").await;
+        for (id, status, error_code) in
+            [("ok", 200_i64, None), ("failed", 500, Some("server_error"))]
+        {
+            sqlx::query("INSERT INTO api_calls(id,request_id,consumer_id,user_id,provider_id,method,path,model,peak,status,latency_ms,input_tokens,actual_cost_usd_nanos,error_code,created_at) VALUES(?,?, 'consumer','user','provider','POST','/v1/chat/completions','deepseek-flash',0,?,10,11,3,?,unixepoch())")
+                .bind(id)
+                .bind(id)
+                .bind(status)
+                .bind(error_code)
+                .execute(&state.db)
+                .await
+                .unwrap();
+        }
+
+        let report = provider_audit(
+            State(state.clone()),
+            Extension(root_identity()),
+            Query(UsageQuery { period: None }),
+        )
+        .await
+        .unwrap();
+        let rows = report.0["rows"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["requests"], 2);
+        assert_eq!(rows[0]["successful_requests"], 1);
+        assert_eq!(rows[0]["failed_requests"], 1);
+        assert_eq!(rows[0]["input_tokens"], 22);
+        assert_eq!(rows[0]["actual_cost_usd_nanos"], 6);
+        assert_eq!(rows[0]["provider_name"], "provider");
+    }
+}
