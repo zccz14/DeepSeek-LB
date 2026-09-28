@@ -5,28 +5,28 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install --yes ca-certificates certbot curl nginx python3-certbot-nginx
 
-id openai-lb >/dev/null 2>&1 || useradd \
+id deepseek-lb >/dev/null 2>&1 || useradd \
   --system \
-  --home-dir /var/lib/openai-lb \
+  --home-dir /var/lib/deepseek-lb \
   --shell /usr/sbin/nologin \
-  openai-lb
+  deepseek-lb
 
-install -d -m 0755 /opt/openai-lb/releases
-install -d -o openai-lb -g openai-lb -m 0700 /var/lib/openai-lb
+install -d -m 0755 /opt/deepseek-lb/releases
+install -d -o deepseek-lb -g deepseek-lb -m 0700 /var/lib/deepseek-lb
 
-install -m 0644 /dev/stdin /etc/systemd/system/openai-lb.service <<'UNIT'
+install -m 0644 /dev/stdin /etc/systemd/system/deepseek-lb.service <<'UNIT'
 [Unit]
-Description=OpenAI-LB
+Description=DeepSeek-LB
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=openai-lb
-Group=openai-lb
-Environment=HOME=/var/lib/openai-lb
-WorkingDirectory=/var/lib/openai-lb
-ExecStart=/opt/openai-lb/current/openai-lb
+User=deepseek-lb
+Group=deepseek-lb
+Environment=HOME=/var/lib/deepseek-lb
+WorkingDirectory=/var/lib/deepseek-lb
+ExecStart=/opt/deepseek-lb/current/deepseek-lb
 Restart=on-failure
 RestartSec=5s
 UMask=0077
@@ -39,17 +39,17 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
-ReadWritePaths=/var/lib/openai-lb
+ReadWritePaths=/var/lib/deepseek-lb
 
 [Install]
 WantedBy=multi-user.target
 UNIT
 
-install -m 0644 /dev/stdin /etc/nginx/sites-available/openai-lb <<'NGINX'
+install -m 0644 /dev/stdin /etc/nginx/sites-available/deepseek-lb <<'NGINX'
 server {
     listen 80;
     listen [::]:80;
-    server_name openai.ntnl.io;
+    server_name deepseek.ntnl.io;
 
     client_max_body_size 512m;
 
@@ -93,9 +93,9 @@ server {
 }
 NGINX
 
-ln -sfn /etc/nginx/sites-available/openai-lb /etc/nginx/sites-enabled/openai-lb
+ln -sfn /etc/nginx/sites-available/deepseek-lb /etc/nginx/sites-enabled/deepseek-lb
 rm -f /etc/nginx/sites-enabled/default
 systemctl daemon-reload
-systemctl enable openai-lb.service
+systemctl enable deepseek-lb.service
 nginx -t
 systemctl restart nginx

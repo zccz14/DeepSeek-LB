@@ -34,7 +34,7 @@ export function updateDshSettings(
     displayName: "NTNL OpenAI",
     apiKeyEnv: "NTNL_OPENAI_API_KEY",
     api: "openai-responses",
-    baseURL: "https://openai.ntnl.io/v1",
+    baseURL: "https://deepseek.ntnl.io/v1",
     models,
   })
   return serializeYaml(document, content)

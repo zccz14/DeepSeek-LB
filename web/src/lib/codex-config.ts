@@ -4,7 +4,7 @@ const providerId = "ntnl-openai"
 
 const providerSettings = [
   ["name", "NTNL OpenAI"],
-  ["base_url", "https://openai.ntnl.io/v1"],
+  ["base_url", "https://deepseek.ntnl.io/v1"],
   ["experimental_bearer_token", undefined],
   ["wire_api", "responses"],
 ] as const
@@ -52,7 +52,7 @@ export function updateCodexConfig(content: string, token: string) {
     throw new Error("config.toml uses an inline model_providers setting.")
   }
   if (lines.some(isOpenAiLbProviderArrayHeader)) {
-    throw new Error("config.toml uses an array of OpenAI-LB providers.")
+    throw new Error("config.toml uses an array of DeepSeek-LB providers.")
   }
 
   const providerHeader = lines.findIndex(isOpenAiLbProviderHeader)

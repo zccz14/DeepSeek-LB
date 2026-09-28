@@ -1,5 +1,5 @@
 ---
-name: OpenAI-LB
+name: DeepSeek-LB
 description: Calm, precise operations console for the CodeX OAuth load balancer
 colors:
   background: "oklch(1 0 0)"
@@ -81,7 +81,7 @@ components:
     padding: "20px"
 ---
 
-# Design System: OpenAI-LB
+# Design System: DeepSeek-LB
 
 ## Overview
 

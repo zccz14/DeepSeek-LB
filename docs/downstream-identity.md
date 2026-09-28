@@ -56,7 +56,7 @@ OAuth 创建支持在 `/api/oauth/complete` 中提交这个开关。它只控制
 ## 上游请求头与能力边界
 
 - `originator` 始终使用选中提供商的真实身份，覆盖写入且只有一个值。
-- 精确匹配时保持既有 UA 行为。跨来源兜底时使用该提供商身份对应的全局 UA 配置；未配置则使用无版本号默认值：`pi`、`opencode` 或 `codex_cli_rs (OpenAI-LB)`，不会透传其他客户端族的 UA。
+- 精确匹配时保持既有 UA 行为。跨来源兜底时使用该提供商身份对应的全局 UA 配置；未配置则使用无版本号默认值：`pi`、`opencode` 或 `codex_cli_rs (DeepSeek-LB)`，不会透传其他客户端族的 UA。
 - Realtime 建连及后续 WebSocket 使用相同的身份规则。
 - 音频转写仍只接受 Codex 来源和 console；开启兜底不解除该能力限制。该端点保留原有桌面 UA 默认值（显式配置的身份 UA 仍优先），即使使用 Pi 提供商兜底，originator 也仍为 `pi`。上游是否接受特定凭据和端点组合，仍由上游决定。
 - 图片生成（`/v1/images/generations` 与控制台 `/api/images/generations`）是一次性请求：不要求调用方提供 `session-id`，上游请求仍会携带该头——调用方提供时原样转发，没有提供时由 LB 生成一个新的 UUIDv7（内嵌时间戳即请求时间）。
@@ -64,7 +64,7 @@ OAuth 创建支持在 `/api/oauth/complete` 中提交这个开关。它只控制
 
 ## Pi 族请求头规整
 
-`originator=pi` 的提供商意味着上游必须看到一条 Pi Agent 形状的请求。因此 OpenAI-LB 对该族
+`originator=pi` 的提供商意味着上游必须看到一条 Pi Agent 形状的请求。因此 DeepSeek-LB 对该族
 （`/v1/responses`、`/v1/responses/compact`、`/backend-api/codex/responses`、
 `/backend-api/codex/responses/compact`）实施闭集白名单：白名单之外的下游请求头一律剥离，
 不做透传；缺失的必填头按下面的规则补齐或拒绝。

@@ -543,6 +543,48 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
 
 [[package]]
+name = "deepseek-lb"
+version = "0.2.212"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "async-stream",
+ "auth-mini-axum",
+ "axum",
+ "base64 0.22.1",
+ "bytes",
+ "chrono",
+ "dashmap",
+ "dirs",
+ "ed25519-dalek",
+ "flate2",
+ "futures-util",
+ "hex",
+ "http-body-util",
+ "httpdate",
+ "rand 0.9.5",
+ "reqwest 0.12.28",
+ "rust-embed",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
+ "sse-core",
+ "sysinfo",
+ "thiserror",
+ "tokio",
+ "tokio-tungstenite",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+ "zstd",
+]
+
+[[package]]
 name = "der"
 version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1556,48 +1598,6 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
-
-[[package]]
-name = "openai-lb"
-version = "0.2.212"
-dependencies = [
- "anyhow",
- "arc-swap",
- "async-stream",
- "auth-mini-axum",
- "axum",
- "base64 0.22.1",
- "bytes",
- "chrono",
- "dashmap",
- "dirs",
- "ed25519-dalek",
- "flate2",
- "futures-util",
- "hex",
- "http-body-util",
- "httpdate",
- "rand 0.9.5",
- "reqwest 0.12.28",
- "rust-embed",
- "rustls",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "sqlx",
- "sse-core",
- "sysinfo",
- "thiserror",
- "tokio",
- "tokio-tungstenite",
- "tower",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "url",
- "uuid",
- "zstd",
-]
 
 [[package]]
 name = "openssl-probe"

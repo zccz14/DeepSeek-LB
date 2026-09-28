@@ -688,7 +688,7 @@ const copy = {
     users: "用户",
     settings: "设置",
     signout: "退出登录",
-    title: "OpenAI-LB",
+    title: "DeepSeek-LB",
     subtitle: "CodeX OAuth 负载均衡器",
     console: "控制台",
     navigationWorkspace: "工作区",
@@ -702,9 +702,9 @@ const copy = {
     email: "邮箱",
     authRedirectTitle: "在 Auth Mini 完成身份验证",
     authRedirectHelp:
-      "邮箱验证码、Passkey 和 ED25519 登录均在 Auth Mini 页面完成；成功后会自动返回 OpenAI-LB。",
+      "邮箱验证码、Passkey 和 ED25519 登录均在 Auth Mini 页面完成；成功后会自动返回 DeepSeek-LB。",
     continueAuthMini: "前往 Auth Mini 登录",
-    loading: "正在加载 OpenAI-LB…",
+    loading: "正在加载 DeepSeek-LB…",
     pageDashboard: "查看当前账户的 24 小时运行摘要。",
     pageProviders: "管理自己拥有的 CodeX OAuth Provider、运行状态与用户授权。",
     pageConsumers: "按 AI App 隔离下游消费者，分别跟踪调用量并独立吊销凭据。",
@@ -715,11 +715,11 @@ const copy = {
     pageOpenCodeIntegration:
       "手动或授权浏览器配置本机 OpenCode 文件，并使用独立的下游 Consumer。",
     pageDirectApiIntegration:
-      "使用独立的下游 Consumer 直接调用 OpenAI-LB 的 OpenAI 兼容 API。",
+      "使用独立的下游 Consumer 直接调用 DeepSeek-LB 的 OpenAI 兼容 API。",
     pageTranscriptions:
       "录制或上传音频，使用当前用户可访问的 CodeX OAuth Provider 转写为文字。",
     pageRealtime:
-      "通过 WebRTC 直接与实时语音模型对话；连接和控制信令由 OpenAI-LB 安全代理到 OpenAI Realtime API。",
+      "通过 WebRTC 直接与实时语音模型对话；连接和控制信令由 DeepSeek-LB 安全代理到 OpenAI Realtime API。",
     pageImages:
       "通过文字提示和可选参考图片生成图像，使用当前用户可访问的 CodeX OAuth Provider。",
     pageUsage: "按消费者核算请求、Token、官方费用与实际费用。",
@@ -729,7 +729,7 @@ const copy = {
     pageModelPrices:
       "查看 OpenAI 官方标准 Token 价格快照，价格按每百万 Token 展示。",
     pageSystemResources:
-      "查看宿主机当前负载和 OpenAI-LB 数据占用；仅 root 和管理员可访问。",
+      "查看宿主机当前负载和 DeepSeek-LB 数据占用；仅 root 和管理员可访问。",
     pageAdminAudit: "查看 root 与管理员执行的管理操作记录。",
     pageProviderAudit:
       "按上游提供商、模型和小时查看最近 7 天请求成功与失败情况。",
@@ -777,12 +777,12 @@ const copy = {
     cumulativeConsumption: "累计消费 (USD)",
     requestNotEnforced: "当前不因可用额度不足拦截请求。",
     requestEnforced: "可用额度不足时会拦截请求。",
-    midasFundTitle: "转入 OpenAI-LB 公共账户",
+    midasFundTitle: "转入 DeepSeek-LB 公共账户",
     midasFundDescription: "输入金额后，Midas 会在新窗口中显示不可编辑的收款账户和金额；登录并确认后，即可完成充值。",
     topupAmount: "充值金额 (USD)",
     topupAmountHint: "最多 9 位小数。Midas 将按精确 USD 纳美元金额转账。",
     continueToMidas: "继续前往 Midas",
-    publicWalletUserId: "OpenAI-LB 公共账户用户 ID",
+    publicWalletUserId: "DeepSeek-LB 公共账户用户 ID",
     copyMidasUserId: "复制用户 ID",
     midasTransferRefresh: "完成转账后刷新本页，累计充值会从 Midas 当前累计转入中显示。",
     midasUnavailable: "Midas 尚未配置",
@@ -809,7 +809,7 @@ const copy = {
     cacheWrite: "缓存写入",
     systemResources: "系统资源",
     systemResourcesDescription:
-      "宿主机当前负载与 OpenAI-LB 数据占用，仅 root 和管理员可见。",
+      "宿主机当前负载与 DeepSeek-LB 数据占用，仅 root 和管理员可见。",
     refreshEvery5s: "每 5 秒刷新",
     sampledAt: "采样于",
     resourceUnavailable: "无法读取系统资源",
@@ -822,7 +822,7 @@ const copy = {
     load1m: "1 分钟负载",
     logicalCpus: "逻辑核心",
     available: "可用",
-    openaiLbRss: "OpenAI-LB RSS",
+    openaiLbRss: "DeepSeek-LB RSS",
     otherSystemMemory: "其他系统占用",
     systemAvailableMemory: "系统可用内存",
     swap: "Swap",
@@ -1283,17 +1283,17 @@ const copy = {
     action: "操作",
     target: "目标",
     clientIp: "客户端 IP",
-    setupTitle: "初始化 OpenAI-LB",
+    setupTitle: "初始化 DeepSeek-LB",
     setupDescription: "连接品牌 Auth Mini，并将首个已验证用户绑定为唯一 root。",
     setupIssuer: "Auth Mini issuer",
     setupIssuerHelp:
-      "填写品牌提供的 Auth Mini HTTPS 地址。OpenAI-LB 只连接该实例，不会部署或管理它。",
+      "填写品牌提供的 Auth Mini HTTPS 地址。DeepSeek-LB 只连接该实例，不会部署或管理它。",
     setupAudience: "JWT audience",
     connectAuth: "连接 Auth Mini",
     changeAuth: "更换实例",
     setupLogin: "验证 root 身份",
     setupLoginHelp:
-      "登录成功后，当前 Auth Mini user_id 将成为 OpenAI-LB root。",
+      "登录成功后，当前 Auth Mini user_id 将成为 DeepSeek-LB root。",
     finishSetup: "绑定 root 并完成初始化",
     finishingSetup: "正在完成初始化",
     setupStepConnect: "连接认证实例",
@@ -1449,7 +1449,7 @@ const copy = {
     users: "Users",
     settings: "Settings",
     signout: "Sign out",
-    title: "OpenAI-LB",
+    title: "DeepSeek-LB",
     subtitle: "CodeX OAuth load balancer",
     console: "Console",
     navigationWorkspace: "Workspace",
@@ -1463,9 +1463,9 @@ const copy = {
     email: "Email",
     authRedirectTitle: "Verify your identity in Auth Mini",
     authRedirectHelp:
-      "Email codes, passkeys, and ED25519 sign-in stay on the Auth Mini page. You will return to OpenAI-LB after signing in.",
+      "Email codes, passkeys, and ED25519 sign-in stay on the Auth Mini page. You will return to DeepSeek-LB after signing in.",
     continueAuthMini: "Continue to Auth Mini",
-    loading: "Loading OpenAI-LB…",
+    loading: "Loading DeepSeek-LB…",
     pageDashboard: "Review the current account's 24-hour operating summary.",
     pageProviders:
       "Manage CodeX OAuth Providers you own, their runtime state, and user access.",
@@ -1478,11 +1478,11 @@ const copy = {
     pageOpenCodeIntegration:
       "Configure the local OpenCode file manually or in the browser with a dedicated downstream Consumer.",
     pageDirectApiIntegration:
-      "Call the OpenAI-compatible OpenAI-LB API with a dedicated downstream Consumer.",
+      "Call the OpenAI-compatible DeepSeek-LB API with a dedicated downstream Consumer.",
     pageTranscriptions:
       "Record or upload audio, then transcribe it through a CodeX OAuth Provider available to the current user.",
     pageRealtime:
-      "Talk to the realtime voice model over WebRTC while OpenAI-LB securely proxies session creation and control signaling to the OpenAI Realtime API.",
+      "Talk to the realtime voice model over WebRTC while DeepSeek-LB securely proxies session creation and control signaling to the OpenAI Realtime API.",
     pageImages:
       "Generate one image from a text prompt through a CodeX OAuth Provider available to the current user.",
     pageUsage:
@@ -1494,7 +1494,7 @@ const copy = {
     pageModelPrices:
       "Review an official OpenAI standard token-pricing snapshot, shown per 1M tokens.",
     pageSystemResources:
-      "Review current host load and OpenAI-LB data usage. Available only to root and administrators.",
+      "Review current host load and DeepSeek-LB data usage. Available only to root and administrators.",
     pageAdminAudit:
       "Review management operations performed by root and administrators.",
     pageProviderAudit:
@@ -1551,12 +1551,12 @@ const copy = {
     requestNotEnforced:
       "Requests are currently not blocked for insufficient available credit.",
     requestEnforced: "Requests are blocked when available credit is insufficient.",
-    midasFundTitle: "Transfer to the OpenAI-LB public account",
+    midasFundTitle: "Transfer to the DeepSeek-LB public account",
     midasFundDescription: "Enter an amount to open Midas in a new window. It shows the recipient and amount read-only; sign in and confirm to complete the top-up.",
     topupAmount: "Top-up amount (USD)",
     topupAmountHint: "Up to 9 decimal places. Midas transfers this exact amount in USD nanodollars.",
     continueToMidas: "Continue to Midas",
-    publicWalletUserId: "OpenAI-LB public-account user ID",
+    publicWalletUserId: "DeepSeek-LB public-account user ID",
     copyMidasUserId: "Copy user ID",
     midasTransferRefresh: "Refresh this page after the transfer; cumulative top-ups are read from your current Midas inbound transfers.",
     midasUnavailable: "Midas is not configured",
@@ -1583,7 +1583,7 @@ const copy = {
     cacheWrite: "Cache write",
     systemResources: "System resources",
     systemResourcesDescription:
-      "Current host load and OpenAI-LB data footprint. Visible to root and administrators only.",
+      "Current host load and DeepSeek-LB data footprint. Visible to root and administrators only.",
     refreshEvery5s: "Refreshes every 5 seconds",
     sampledAt: "Sampled",
     resourceUnavailable: "System resources unavailable",
@@ -1597,7 +1597,7 @@ const copy = {
     load1m: "1-minute load",
     logicalCpus: "Logical CPUs",
     available: "Available",
-    openaiLbRss: "OpenAI-LB RSS",
+    openaiLbRss: "DeepSeek-LB RSS",
     otherSystemMemory: "Other system usage",
     systemAvailableMemory: "System available memory",
     swap: "Swap",
@@ -2081,18 +2081,18 @@ const copy = {
     action: "Action",
     target: "Target",
     clientIp: "Client IP",
-    setupTitle: "Initialize OpenAI-LB",
+    setupTitle: "Initialize DeepSeek-LB",
     setupDescription:
       "Connect the brand Auth Mini instance and bind the first verified user as the only root.",
     setupIssuer: "Auth Mini issuer",
     setupIssuerHelp:
-      "Enter the Auth Mini HTTPS URL supplied by the brand. OpenAI-LB connects to it; it does not deploy or manage it.",
+      "Enter the Auth Mini HTTPS URL supplied by the brand. DeepSeek-LB connects to it; it does not deploy or manage it.",
     setupAudience: "JWT audience",
     connectAuth: "Connect Auth Mini",
     changeAuth: "Change instance",
     setupLogin: "Verify the root identity",
     setupLoginHelp:
-      "After sign-in, this Auth Mini user_id becomes the OpenAI-LB root.",
+      "After sign-in, this Auth Mini user_id becomes the DeepSeek-LB root.",
     finishSetup: "Bind root and finish setup",
     finishingSetup: "Finishing setup",
     setupStepConnect: "Connect identity",
@@ -2921,7 +2921,7 @@ const integrationCopy: Record<
         "先在“下游消费者”中为 ChatGPT（CodeX）创建独立 Consumer 并保存只展示一次的密钥。手动配置需要把密钥粘贴到配置文件；自动配置只会把新密钥写入你已授权的本地文件。",
       manualTitle: "手动配置",
       manualDescription:
-        "编辑用户级 ~/.codex/config.toml，将 OpenAI-LB 设为 CodeX 的模型提供方。",
+        "编辑用户级 ~/.codex/config.toml，将 DeepSeek-LB 设为 CodeX 的模型提供方。",
       manualConfigInstruction:
         "将以下内容合并到 ~/.codex/config.toml；如果已有其他设置，只更新 model_provider 与 model_providers.ntnl-openai。",
       manualTokenInstruction:
@@ -3020,19 +3020,19 @@ const integrationCopy: Record<
         "先在“下游消费者”中为 OpenCode 创建独立 Consumer 并保存只展示一次的密钥。手动配置需要把密钥粘贴到 JSONC 文件；自动配置只会把新密钥写入你已授权的本地文件。",
       manualTitle: "手动配置",
       manualDescription:
-        "编辑用户级 ~/.config/opencode/opencode.jsonc，将 OpenAI-LB 添加为 OpenAI-compatible Provider。",
+        "编辑用户级 ~/.config/opencode/opencode.jsonc，将 DeepSeek-LB 添加为 OpenAI-compatible Provider。",
       manualConfigInstruction:
-        "将以下 provider.openai-lb 片段合并到 ~/.config/opencode/opencode.jsonc，并把示例模型替换为 /v1/models 返回的可用 model id。",
+        "将以下 provider.deepseek-lb 片段合并到 ~/.config/opencode/opencode.jsonc，并把示例模型替换为 /v1/models 返回的可用 model id。",
       manualTokenInstruction:
         "将 <YOUR_CONSUMER_KEY> 替换为“下游消费者”页面创建的 Consumer 密钥。不要把真实密钥提交到 Git 或共享配置仓库。",
       manualVerifyTitle: "重启并验证",
       manualVerifyDescription:
-        "保存配置后重启 OpenCode，并选择 openai-lb/gpt-5.4（或模型目录中的其他可用模型）。若请求失败，先用 /v1/models 验证 Consumer 和 baseURL。",
+        "保存配置后重启 OpenCode，并选择 deepseek-lb/gpt-5.4（或模型目录中的其他可用模型）。若请求失败，先用 /v1/models 验证 Consumer 和 baseURL。",
       copyLabel: "复制",
       copiedLabel: "已复制",
       automaticTitle: "浏览器自动配置",
       automaticDescription:
-        "授权浏览器读取 opencode.jsonc 后，页面会创建专用 Consumer 并将 provider.openai-lb 写回该文件；其他 JSONC 配置会保留。",
+        "授权浏览器读取 opencode.jsonc 后，页面会创建专用 Consumer 并将 provider.deepseek-lb 写回该文件；其他 JSONC 配置会保留。",
       findConfig: "在系统文件选择器中找到 opencode.jsonc。",
       findConfigDescription: "打开以下本机文件：",
       platformInstructions: {
@@ -3059,7 +3059,7 @@ const integrationCopy: Record<
         "opencode.jsonc 无法解析或包含当前流程无法安全更新的配置。文件未修改，也没有创建 Consumer。",
       restartTitle: "重启 OpenCode",
       restartDescription:
-        "页面只会更新 provider.openai-lb；其他 JSONC 配置保持不变。写入完成后重启 OpenCode。",
+        "页面只会更新 provider.deepseek-lb；其他 JSONC 配置保持不变。写入完成后重启 OpenCode。",
       configWritten: "已写入本机 OpenCode 配置；请重启 OpenCode。",
       configError: "配置未完成",
       configWriteFailed:
@@ -3079,7 +3079,7 @@ const integrationCopy: Record<
         "在“下游消费者”中为这类直接 API 调用创建独立 Consumer，并立即保存只展示一次的密钥。以下示例以 <YOUR_CONSUMER_KEY> 表示该密钥。",
       title: "直接 API 调用",
       description:
-        "OpenAI-LB 代理 OpenAI /v1 兼容接口。直接用 Bearer Consumer 密钥调用所需端点，无需编辑任何本地配置文件。",
+        "DeepSeek-LB 代理 OpenAI /v1 兼容接口。直接用 Bearer Consumer 密钥调用所需端点，无需编辑任何本地配置文件。",
       firstStep: "先验证服务可访问的模型列表。",
       secondStep: "再调用 Responses API；也可调用图片或音频端点。",
       modelPlaceholder: "替换为可用模型 ID",
@@ -3099,7 +3099,7 @@ const integrationCopy: Record<
         "First create a dedicated Consumer for ChatGPT (CodeX) on the Consumers page and save its one-time secret. Manual setup pastes it into the config file; automatic setup writes the new secret only to the local file you authorize.",
       manualTitle: "Manual configuration",
       manualDescription:
-        "Edit the user-level ~/.codex/config.toml and point CodeX at OpenAI-LB.",
+        "Edit the user-level ~/.codex/config.toml and point CodeX at DeepSeek-LB.",
       manualConfigInstruction:
         "Merge this into ~/.codex/config.toml. If other settings already exist, update only model_provider and model_providers.ntnl-openai.",
       manualTokenInstruction:
@@ -3201,19 +3201,19 @@ const integrationCopy: Record<
         "First create a dedicated Consumer for OpenCode on the Consumers page and save its one-time secret. Manual setup pastes it into the JSONC file; automatic setup writes the new secret only to the local file you authorize.",
       manualTitle: "Manual configuration",
       manualDescription:
-        "Edit the user-level ~/.config/opencode/opencode.jsonc and add OpenAI-LB as an OpenAI-compatible provider.",
+        "Edit the user-level ~/.config/opencode/opencode.jsonc and add DeepSeek-LB as an OpenAI-compatible provider.",
       manualConfigInstruction:
-        "Merge this provider.openai-lb block into ~/.config/opencode/opencode.jsonc and replace the example with a model ID returned by /v1/models.",
+        "Merge this provider.deepseek-lb block into ~/.config/opencode/opencode.jsonc and replace the example with a model ID returned by /v1/models.",
       manualTokenInstruction:
         "Replace <YOUR_CONSUMER_KEY> with the Consumer secret created on the Consumers page. Never commit a real secret to Git or a shared config repository.",
       manualVerifyTitle: "Restart and verify",
       manualVerifyDescription:
-        "Save the file, restart OpenCode, and choose openai-lb/gpt-5.4 (or another available model). If a request fails, verify the Consumer and baseURL with /v1/models.",
+        "Save the file, restart OpenCode, and choose deepseek-lb/gpt-5.4 (or another available model). If a request fails, verify the Consumer and baseURL with /v1/models.",
       copyLabel: "Copy",
       copiedLabel: "Copied",
       automaticTitle: "Configure in the browser",
       automaticDescription:
-        "After you authorize opencode.jsonc, the page creates a dedicated Consumer and writes provider.openai-lb back while retaining other JSONC settings.",
+        "After you authorize opencode.jsonc, the page creates a dedicated Consumer and writes provider.deepseek-lb back while retaining other JSONC settings.",
       findConfig: "Find opencode.jsonc in the system file picker.",
       findConfigDescription: "Open this local file:",
       platformInstructions: {
@@ -3240,7 +3240,7 @@ const integrationCopy: Record<
         "opencode.jsonc could not be parsed or cannot be safely updated by this flow. The file was not changed and no Consumer was created.",
       restartTitle: "Restart OpenCode",
       restartDescription:
-        "Only provider.openai-lb is updated. All other JSONC settings stay unchanged. Restart OpenCode after the write completes.",
+        "Only provider.deepseek-lb is updated. All other JSONC settings stay unchanged. Restart OpenCode after the write completes.",
       configWritten:
         "Your local OpenCode configuration is updated. Restart OpenCode to use it.",
       configError: "Configuration was not completed",
@@ -3261,7 +3261,7 @@ const integrationCopy: Record<
         "Create a dedicated Consumer for direct API calls on the Consumers page and save its one-time secret immediately. The examples below use <YOUR_CONSUMER_KEY> for that secret.",
       title: "Direct API calls",
       description:
-        "OpenAI-LB proxies OpenAI-compatible /v1 endpoints. Authenticate the endpoint you need with a Bearer Consumer secret; no local configuration file is edited.",
+        "DeepSeek-LB proxies OpenAI-compatible /v1 endpoints. Authenticate the endpoint you need with a Bearer Consumer secret; no local configuration file is edited.",
       firstStep: "First confirm the model list the service exposes.",
       secondStep:
         "Then call the Responses API; image and audio endpoints are also available.",
@@ -3358,9 +3358,9 @@ function OpenCodeIntegrationPage({
         manualConfig: (configOrigin) => `{
   "$schema": "https://opencode.ai/config.json",
   "provider": {
-    "openai-lb": {
+    "deepseek-lb": {
       "npm": "@ai-sdk/openai-compatible",
-      "name": "OpenAI-LB",
+      "name": "DeepSeek-LB",
       "options": {
         "baseURL": "${configOrigin}/v1",
         "apiKey": "<YOUR_CONSUMER_KEY>"
@@ -3602,7 +3602,7 @@ function DshIntegrationGuide({
 }) {
   const providerFields = [
     ["Provider ID", "ntnl-openai"],
-    ["API URL", "https://openai.ntnl.io/v1"],
+    ["API URL", "https://deepseek.ntnl.io/v1"],
     ["API protocol", "openai-responses"],
   ]
 

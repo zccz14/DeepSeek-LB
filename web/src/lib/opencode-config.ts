@@ -16,11 +16,11 @@ export function updateOpenCodeConfig(
   }
 
   const document = parseDocument(content)
-  const provider = objectValue(objectValue(document.provider)["openai-lb"])
+  const provider = objectValue(objectValue(document.provider)["deepseek-lb"])
   const nextProvider = {
     ...provider,
     npm: "@ai-sdk/openai-compatible",
-    name: "OpenAI-LB",
+    name: "DeepSeek-LB",
     options: {
       ...objectValue(provider.options),
       baseURL: `${origin}/v1`,
@@ -35,7 +35,7 @@ export function updateOpenCodeConfig(
     },
   }
   const newline = content.includes("\r\n") ? "\r\n" : "\n"
-  const edits = modify(content, ["provider", "openai-lb"], nextProvider, {
+  const edits = modify(content, ["provider", "deepseek-lb"], nextProvider, {
     formattingOptions: { insertSpaces: true, tabSize: 2, eol: newline },
   })
 
@@ -56,7 +56,7 @@ function parseDocument(content: string): JsonObject {
 function objectValue(value: unknown): JsonObject {
   if (value === undefined) return {}
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error("OpenAI-LB provider must be a JSON object.")
+    throw new Error("DeepSeek-LB provider must be a JSON object.")
   }
   return value as JsonObject
 }

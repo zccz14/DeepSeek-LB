@@ -267,10 +267,12 @@ mod tests {
 
     #[test]
     fn sqlite_usage_includes_wal_and_shared_memory_files() {
-        let directory =
-            std::env::temp_dir().join(format!("openai-lb-resource-test-{}", uuid::Uuid::new_v4()));
+        let directory = std::env::temp_dir().join(format!(
+            "deepseek-lb-resource-test-{}",
+            uuid::Uuid::new_v4()
+        ));
         std::fs::create_dir_all(&directory).unwrap();
-        let database = directory.join("openai-lb.sqlite3");
+        let database = directory.join("deepseek-lb.sqlite3");
         std::fs::write(&database, [0_u8; 11]).unwrap();
         std::fs::write(with_suffix(&database, "-wal"), [0_u8; 7]).unwrap();
         std::fs::write(with_suffix(&database, "-shm"), [0_u8; 3]).unwrap();
@@ -287,7 +289,7 @@ mod tests {
     #[test]
     fn missing_wal_and_shared_memory_files_count_as_zero() {
         let database = std::env::temp_dir().join(format!(
-            "openai-lb-resource-test-{}.sqlite3",
+            "deepseek-lb-resource-test-{}.sqlite3",
             uuid::Uuid::new_v4()
         ));
         std::fs::write(&database, [0_u8; 5]).unwrap();
@@ -326,7 +328,7 @@ mod tests {
     #[tokio::test]
     async fn sqlite_usage_reports_reclaimable_freelist_space() {
         let path = std::env::temp_dir().join(format!(
-            "openai-lb-resource-freelist-{}.sqlite3",
+            "deepseek-lb-resource-freelist-{}.sqlite3",
             uuid::Uuid::new_v4()
         ));
         let pool = crate::db::connect_test_file(&path).await.unwrap();
@@ -357,7 +359,7 @@ mod tests {
     #[tokio::test]
     async fn vacuum_reclaims_sqlite_freelist_space() {
         let path = std::env::temp_dir().join(format!(
-            "openai-lb-resource-vacuum-{}.sqlite3",
+            "deepseek-lb-resource-vacuum-{}.sqlite3",
             uuid::Uuid::new_v4()
         ));
         let pool = crate::db::connect_test_file(&path).await.unwrap();

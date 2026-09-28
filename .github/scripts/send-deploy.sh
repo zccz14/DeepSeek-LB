@@ -6,7 +6,7 @@ tag="${2:?release tag is required}"
 repository="${GITHUB_REPOSITORY:?GitHub repository is required}"
 github_token="${GITHUB_TOKEN:?GitHub token is required}"
 github_api_url="${GITHUB_API_URL:-https://api.github.com}"
-archive="openai-lb-x86_64-unknown-linux-gnu.tar.gz"
+archive="deepseek-lb-x86_64-unknown-linux-gnu.tar.gz"
 script_path="deploy/deploy-release.sh"
 release_json="$(mktemp)"
 response_headers="$(mktemp)"
@@ -82,8 +82,8 @@ script_base64="$(base64 < "$script_path" | tr -d '\n')"
 printf -v quoted_tag '%q' "$tag"
 printf -v quoted_archive_url '%q' "$archive_url"
 printf -v quoted_checksum_url '%q' "$checksum_url"
-install_command="printf '%s' '$script_base64' | base64 -d > /tmp/openai-lb-deploy.sh"
-run_command="bash /tmp/openai-lb-deploy.sh $quoted_tag $quoted_archive_url $quoted_checksum_url"
+install_command="printf '%s' '$script_base64' | base64 -d > /tmp/deepseek-lb-deploy.sh"
+run_command="bash /tmp/deepseek-lb-deploy.sh $quoted_tag $quoted_archive_url $quoted_checksum_url"
 parameters="$(jq -cn \
   --arg install "$install_command" \
   --arg run "$run_command" \
@@ -92,7 +92,7 @@ parameters="$(jq -cn \
 command_id="$(aws ssm send-command \
   --instance-ids "$instance_id" \
   --document-name AWS-RunShellScript \
-  --comment "Deploy OpenAI-LB $tag" \
+  --comment "Deploy DeepSeek-LB $tag" \
   --parameters "$parameters" \
   --query 'Command.CommandId' \
   --output text)"

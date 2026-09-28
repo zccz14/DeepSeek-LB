@@ -1,2 +1,0 @@
-ALTER TABLE api_calls
-ADD COLUMN fast_mode INTEGER NOT NULL DEFAULT 0 CHECK(fast_mode IN (0, 1));

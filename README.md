@@ -1,28 +1,28 @@
-# OpenAI-LB
+# DeepSeek-LB
 
-OpenAI-LB 是一个面向 OpenAI / CodeX OAuth 上游提供商的反向代理和负载均衡器。它以单个 Rust 可执行文件交付，内嵌 React + shadcn 管理界面，并使用 SQLite 保存配置、权限、上游提供商、Consumer、用量和逐调用审计。
+DeepSeek-LB 是一个面向 OpenAI / CodeX OAuth 上游提供商的反向代理和负载均衡器。它以单个 Rust 可执行文件交付，内嵌 React + shadcn 管理界面，并使用 SQLite 保存配置、权限、上游提供商、Consumer、用量和逐调用审计。
 
 项目只处理 OpenAI / CodeX 能力，包括 Responses、Compact、图像生成、音频转写和模型列表。它不提供其他 AI 厂商的协议兼容层。
 
 ## 直接运行
 
-从 [GitHub Releases](https://github.com/zccz14/OpenAI-LB/releases) 下载当前平台的压缩包并校验同名 `.sha256` 文件，然后运行：
+从 [GitHub Releases](https://github.com/zccz14/DeepSeek-LB/releases) 下载当前平台的压缩包并校验同名 `.sha256` 文件，然后运行：
 
-预构建发布仅覆盖 Linux x86_64；GitHub Release 会自动部署到 https://openai.ntnl.io。
+预构建发布仅覆盖 Linux x86_64；GitHub Release 会自动部署到 https://deepseek.ntnl.io。
 
 ```bash
-./openai-lb
+./deepseek-lb
 ```
 
 服务监听 `0.0.0.0:8080`。首次启动会自动完成以下本地准备：
 
-- 创建 `~/.openai-lb/`。
-- 创建 `~/.openai-lb/openai-lb.sqlite3` 并执行版本化迁移。
+- 创建 `~/.deepseek-lb/`。
+- 创建 `~/.deepseek-lb/deepseek-lb.sqlite3` 并执行版本化迁移。
 - 提供 Setup API 和 Setup GUI。
 
-打开 `http://localhost:8080`，填写品牌提供的 Auth Mini issuer，然后前往该 Auth Mini 实例的托管登录页面。登录成功后浏览器会返回 OpenAI-LB，再将当前用户绑定为唯一 `root`。Setup 完成后初始化入口立即关闭。
+打开 `http://localhost:8080`，填写品牌提供的 Auth Mini issuer，然后前往该 Auth Mini 实例的托管登录页面。登录成功后浏览器会返回 DeepSeek-LB，再将当前用户绑定为唯一 `root`。Setup 完成后初始化入口立即关闭。
 
-OpenAI-LB 连接现有的品牌 Auth Mini 实例。用户不需要为 OpenAI-LB 部署 Auth Mini。前端使用 `auth-mini` SDK，后端使用 `auth-mini-axum` 的预热 JWKS verifier 验证 Ed25519 access JWT，并以精确的服务 hostname audience 和 `user_id` 关联本地 `root / admin / user` 权限。
+DeepSeek-LB 连接现有的品牌 Auth Mini 实例。用户不需要为 DeepSeek-LB 部署 Auth Mini。前端使用 `auth-mini` SDK，后端使用 `auth-mini-axum` 的预热 JWKS verifier 验证 Ed25519 access JWT，并以精确的服务 hostname audience 和 `user_id` 关联本地 `root / admin / user` 权限。
 
 ## 产品能力
 
@@ -42,7 +42,7 @@ OpenAI-LB 连接现有的品牌 Auth Mini 实例。用户不需要为 OpenAI-LB 
 - 跟踪 `Retry-After` 与 `x-ratelimit-*`，对 429 上游提供商自动冷却并在到期后恢复。
 - 对 401/403 上游提供商标记认证错误；手工禁用上游提供商不会自动恢复。
 - Responses、SSE、音频上传和二进制响应保持流式传输。
-- 充值只使用 Midas 公共 fund account：root 在后台保存该账户的 `user_id` 和 fund API key；用户在 OpenAI-LB 输入 USD 金额后，页面会打开带有该公开 ID 和精确纳美元金额的 Midas 确认页。用户登录并确认后，Midas 发起内部转账；OpenAI-LB 只按“该用户 → 公共账户”的当前累计转入额计算充值。旧 Midas 自动扣款与历史基线不再保留。
+- 充值只使用 Midas 公共 fund account：root 在后台保存该账户的 `user_id` 和 fund API key；用户在 DeepSeek-LB 输入 USD 金额后，页面会打开带有该公开 ID 和精确纳美元金额的 Midas 确认页。用户登录并确认后，Midas 发起内部转账；DeepSeek-LB 只按“该用户 → 公共账户”的当前累计转入额计算充值。旧 Midas 自动扣款与历史基线不再保留。
 
 权限边界：
 
@@ -80,7 +80,7 @@ curl http://localhost:8080/v1/audio/transcriptions \
   -F 'model=gpt-4o-transcribe'
 ```
 
-转写只对 `codex` 客户端族开放：上游是 ChatGPT 的桌面专属端点，OpenAI-LB 会固定以 `Codex Desktop` 身份调用它。
+转写只对 `codex` 客户端族开放：上游是 ChatGPT 的桌面专属端点，DeepSeek-LB 会固定以 `Codex Desktop` 身份调用它。
 
 ```bash
 curl http://localhost:8080/v1/images/generations \
@@ -126,7 +126,7 @@ cargo build --release --locked
 
 ## 生产部署
 
-生产环境运行在 AWS Tokyo 的 `openai-lb-tokyo` EC2，并通过 <https://openai.ntnl.io> 提供 HTTPS 服务。Nginx 只负责 TLS 和流式反向代理；SQLite 与应用配置保存在实例的 `/var/lib/openai-lb/.openai-lb/`。
+生产环境运行在 AWS Tokyo 的 `deepseek-lb-tokyo` EC2，并通过 <https://deepseek.ntnl.io> 提供 HTTPS 服务。Nginx 只负责 TLS 和流式反向代理；SQLite 与应用配置保存在实例的 `/var/lib/deepseek-lb/.deepseek-lb/`。
 
 推送 `v*` tag 后，Release workflow 会先发布三个官方平台资产，再使用 GitHub OIDC 和 AWS Systems Manager 将 Linux x86_64 资产部署到 EC2。部署过程校验 Release 的 SHA-256，使用 systemd 重启服务并执行本机健康检查；健康检查失败时恢复上一版本。仓库不保存 AWS 长期密钥，也不开放 SSH 入站端口。
 
@@ -170,7 +170,7 @@ Pull Request 工作流还会运行 RustSec 依赖审计。
 - 请求/响应诊断记录会保存最多 1 MiB 的正文预览，图像生成响应为最多 4 MiB；SQLite 文件因此可能包含 prompt、输出、图像或音频片段，应按敏感业务数据保护并使用较短保留期。
 - 诊断记录不会保存 Authorization、Cookie、Token、Secret、Consumer 类请求头或 OAuth 凭据。
 - SQLite 文件应位于本机磁盘；不要让多个实例通过网络文件系统同时写入同一数据库。
-- 生产部署应在 OpenAI-LB 前提供 TLS，并限制数据目录的系统账户访问权限。
+- 生产部署应在 DeepSeek-LB 前提供 TLS，并限制数据目录的系统账户访问权限。
 
 ## License
 

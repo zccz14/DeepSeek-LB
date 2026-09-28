@@ -11,13 +11,13 @@ injection_marker="$temporary_dir/injected"
 
 cleanup() {
   rm -rf "$temporary_dir"
-  rm -f /tmp/openai-lb-deploy.sh
+  rm -f /tmp/deepseek-lb-deploy.sh
 }
 trap cleanup EXIT
 
 mkdir -p "$fixture_dir/.github/scripts" "$fixture_dir/deploy" "$mock_bin"
 cp "$repository_root/.github/scripts/send-deploy.sh" "$fixture_dir/.github/scripts/send-deploy.sh"
-grep -Fq -- 'rm -rf /opt/openai-lb/downloads' "$repository_root/deploy/deploy-release.sh"
+grep -Fq -- 'rm -rf /opt/deepseek-lb/downloads' "$repository_root/deploy/deploy-release.sh"
 
 cat > "$fixture_dir/deploy/deploy-release.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -71,9 +71,9 @@ case "$url" in
   */releases/tags/*)
     [ "$accept" = "Accept: application/vnd.github+json" ]
     if [ "$MOCK_SCENARIO" = "missing-checksum" ]; then
-      printf '{"assets":[{"id":101,"name":"openai-lb-x86_64-unknown-linux-gnu.tar.gz"}]}' > "$output"
+      printf '{"assets":[{"id":101,"name":"deepseek-lb-x86_64-unknown-linux-gnu.tar.gz"}]}' > "$output"
     else
-      printf '{"assets":[{"id":101,"name":"openai-lb-x86_64-unknown-linux-gnu.tar.gz"},{"id":102,"name":"openai-lb-x86_64-unknown-linux-gnu.tar.gz.sha256"}]}' > "$output"
+      printf '{"assets":[{"id":101,"name":"deepseek-lb-x86_64-unknown-linux-gnu.tar.gz"},{"id":102,"name":"deepseek-lb-x86_64-unknown-linux-gnu.tar.gz.sha256"}]}' > "$output"
     fi
     ;;
   */releases/assets/101)
@@ -176,7 +176,7 @@ run_send_deploy() {
       MOCK_SCENARIO="$1" \
       ARCHIVE_URL="$archive_url" \
       CHECKSUM_URL="$checksum_url" \
-      GITHUB_REPOSITORY="zccz14/OpenAI-LB" \
+      GITHUB_REPOSITORY="zccz14/DeepSeek-LB" \
       GITHUB_API_URL="https://api.github.test" \
       GITHUB_TOKEN="short-lived-test-token" \
       .github/scripts/send-deploy.sh "i-test" "v0.2.6"
@@ -212,21 +212,21 @@ if run_send_deploy missing-checksum > /dev/null 2> "$temporary_dir/missing-check
   echo "Missing checksum asset unexpectedly succeeded" >&2
   exit 1
 fi
-grep -q "Expected exactly one release asset named 'openai-lb-x86_64-unknown-linux-gnu.tar.gz.sha256'; found 0." \
+grep -q "Expected exactly one release asset named 'deepseek-lb-x86_64-unknown-linux-gnu.tar.gz.sha256'; found 0." \
   "$temporary_dir/missing-checksum.err"
 
 if run_send_deploy missing-redirect > /dev/null 2> "$temporary_dir/missing-redirect.err"; then
   echo "Missing redirect unexpectedly succeeded" >&2
   exit 1
 fi
-grep -q "GitHub did not return a download redirect for 'openai-lb-x86_64-unknown-linux-gnu.tar.gz' (HTTP 200)." \
+grep -q "GitHub did not return a download redirect for 'deepseek-lb-x86_64-unknown-linux-gnu.tar.gz' (HTTP 200)." \
   "$temporary_dir/missing-redirect.err"
 
 if run_send_deploy missing-location > /dev/null 2> "$temporary_dir/missing-location.err"; then
   echo "Redirect without Location unexpectedly succeeded" >&2
   exit 1
 fi
-grep -q "GitHub returned a redirect without a Location header for 'openai-lb-x86_64-unknown-linux-gnu.tar.gz'." \
+grep -q "GitHub returned a redirect without a Location header for 'deepseek-lb-x86_64-unknown-linux-gnu.tar.gz'." \
   "$temporary_dir/missing-location.err"
 
 echo "deploy script tests passed"

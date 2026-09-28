@@ -16,32 +16,17 @@ const QUEUE_CAPACITY: usize = 4_096;
 const BATCH_CAPACITY: usize = 128;
 const QUEUE_BYTE_CAPACITY: usize = 64 * 1024 * 1024;
 pub const ARCHIVE_BODY_LIMIT: usize = 2 * 1024 * 1024;
-pub const IMAGE_ARCHIVE_BODY_LIMIT: usize = 4 * 1024 * 1024;
 const RETRY_INITIAL_DELAY: Duration = Duration::from_millis(100);
 const RETRY_MAX_DELAY: Duration = Duration::from_secs(5);
 
 static DROPPED_EVENTS: AtomicU64 = AtomicU64::new(0);
 static DROPPED_ARCHIVES: AtomicU64 = AtomicU64::new(0);
 
-#[cfg(test)]
-static WRITE_RETRIES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-#[cfg(test)]
-pub(crate) fn write_retries() -> usize {
-    WRITE_RETRIES.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-#[cfg(test)]
-pub(crate) fn dropped_events() -> u64 {
-    DROPPED_EVENTS.load(Ordering::Relaxed)
-}
-
 #[derive(Debug)]
 pub struct AuditEvent {
     pub id: String,
     pub request_id: String,
     pub thread_id: Option<String>,
-    pub session_id: Option<String>,
     pub consumer_id: String,
     pub user_id: String,
     pub request_archive: bool,
@@ -51,13 +36,9 @@ pub struct AuditEvent {
     pub method: String,
     pub path: String,
     pub model: Option<String>,
-    pub downstream_user_agent: Option<String>,
-    pub downstream_originator: Option<String>,
-    pub upstream_originator: Option<String>,
-    pub originator_fallback_reason: Option<String>,
-    pub upstream_model: Option<String>,
     pub reasoning_effort: Option<String>,
-    pub fast_mode: bool,
+    /// Whether the request started inside DeepSeek peak hours.
+    pub peak: bool,
     pub status: i64,
     pub upstream_http_version: Option<String>,
     pub first_byte_latency_ms: Option<i64>,
@@ -108,7 +89,6 @@ enum QueuedAudit {
         id: String,
         bytes: i64,
         encoding: Option<String>,
-        codex_turn_state_length: Option<i64>,
         downstream_response_headers_json: Option<String>,
     },
 }
@@ -161,7 +141,6 @@ impl AuditWriter {
         id: String,
         bytes: i64,
         encoding: Option<String>,
-        codex_turn_state_length: Option<i64>,
         downstream_response_headers_json: Option<String>,
     ) {
         if self
@@ -170,7 +149,6 @@ impl AuditWriter {
                 id,
                 bytes,
                 encoding,
-                codex_turn_state_length,
                 downstream_response_headers_json,
             })
             .is_err()
@@ -222,8 +200,6 @@ async fn run(
             match persist(&pool, &write_gate, &batch).await {
                 Ok(()) => break,
                 Err(error) => {
-                    #[cfg(test)]
-                    WRITE_RETRIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     tracing::error!(events = batch.len(), retry_ms = retry_delay.as_millis(), %error, "audit batch write failed; retrying");
                     tokio::time::sleep(retry_delay).await;
                     retry_delay = retry_delay.saturating_mul(2).min(RETRY_MAX_DELAY);
@@ -251,13 +227,11 @@ async fn persist(
                 id,
                 bytes,
                 encoding,
-                codex_turn_state_length,
                 downstream_response_headers_json,
             } => {
-                sqlx::query("UPDATE api_calls SET response_transport_bytes=?,downstream_content_encoding=?,codex_turn_state_length=? WHERE id=?")
+                sqlx::query("UPDATE api_calls SET response_transport_bytes=?,downstream_content_encoding=? WHERE id=?")
                     .bind(bytes)
                     .bind(encoding)
-                    .bind(codex_turn_state_length)
                     .bind(id)
                     .execute(&mut *transaction)
                     .await?;
@@ -319,20 +293,20 @@ async fn insert(
     .await?;
 
     sqlx::query(
-        "INSERT INTO api_calls(id,request_id,thread_id,session_id,consumer_id,user_id,provider_id,affinity_hash,affinity_source,method,path,model,reasoning_effort,fast_mode,status,first_byte_latency_ms,request_bytes,response_bytes,request_transport_bytes,response_transport_bytes,downstream_accept_encoding,downstream_content_encoding,upstream_accept_encoding,upstream_content_encoding,latency_ms,input_tokens,output_tokens,cached_tokens,official_cost_usd_nanos,actual_cost_usd_nanos,price_multiplier_nanos,official_consumed_usd_before_nanos,official_consumed_usd_after_nanos,actual_consumed_usd_before_nanos,actual_consumed_usd_after_nanos,official_provided_usd_before_nanos,official_provided_usd_after_nanos,actual_provided_usd_before_nanos,actual_provided_usd_after_nanos,error,client_ip,created_at,upstream_http_version,error_code,downstream_user_agent,upstream_model,downstream_originator,upstream_originator,originator_fallback_reason) VALUES(
-            ?,?,?,?, ?,?,
+        "INSERT INTO api_calls(id,request_id,thread_id,consumer_id,user_id,provider_id,affinity_hash,affinity_source,method,path,model,reasoning_effort,peak,status,first_byte_latency_ms,request_bytes,response_bytes,request_transport_bytes,response_transport_bytes,downstream_accept_encoding,downstream_content_encoding,upstream_accept_encoding,upstream_content_encoding,latency_ms,input_tokens,output_tokens,cached_tokens,official_cost_usd_nanos,actual_cost_usd_nanos,price_multiplier_nanos,official_consumed_usd_before_nanos,official_consumed_usd_after_nanos,actual_consumed_usd_before_nanos,actual_consumed_usd_after_nanos,official_provided_usd_before_nanos,official_provided_usd_after_nanos,actual_provided_usd_before_nanos,actual_provided_usd_after_nanos,error,client_ip,created_at,upstream_http_version,error_code) VALUES(
+            ?,?,?,?,?,?,
             (SELECT id FROM providers WHERE id=?),
             ?,?,?,?,?,?,?,
             ?,?,?,?,?,?,?,
             ?,?,?,?,?,?,?,
             ?,?,?,?,?,?,?,
-            ?,?,?,?,?,?,?,?,?,?,?,?,?,?
+            ?,?,?,?,?,?,?,
+            ?
         )",
     )
         .bind(&event.id)
         .bind(&event.request_id)
         .bind(&event.thread_id)
-        .bind(&event.session_id)
         .bind(&event.consumer_id)
         .bind(&event.user_id)
         .bind(&event.provider_id)
@@ -342,7 +316,7 @@ async fn insert(
         .bind(&event.path)
         .bind(&event.model)
         .bind(&event.reasoning_effort)
-        .bind(event.fast_mode)
+        .bind(event.peak)
         .bind(event.status)
         .bind(event.first_byte_latency_ms)
         .bind(event.request_bytes)
@@ -373,11 +347,6 @@ async fn insert(
         .bind(event.created_at)
         .bind(&event.upstream_http_version)
         .bind(&event.error_code)
-        .bind(&event.downstream_user_agent)
-        .bind(&event.upstream_model)
-        .bind(&event.downstream_originator)
-        .bind(&event.upstream_originator)
-        .bind(&event.originator_fallback_reason)
         .execute(&mut **transaction)
         .await?;
     if event.request_archive {
@@ -490,7 +459,6 @@ mod tests {
             id: id.to_owned(),
             request_id: id.to_owned(),
             thread_id: None,
-            session_id: None,
             consumer_id: consumer_id.to_owned(),
             user_id: user_id.to_owned(),
             request_archive: false,
@@ -498,15 +466,10 @@ mod tests {
             affinity_hash: None,
             affinity_source: None,
             method: "POST".to_owned(),
-            path: "/v1/responses".to_owned(),
-            model: Some("gpt-5.4".to_owned()),
-            downstream_user_agent: None,
-            downstream_originator: None,
-            upstream_originator: None,
-            originator_fallback_reason: None,
-            upstream_model: None,
+            path: "/v1/chat/completions".to_owned(),
+            model: Some("deepseek-flash".to_owned()),
             reasoning_effort: None,
-            fast_mode: false,
+            peak: false,
             status: 200,
             upstream_http_version: None,
             first_byte_latency_ms: None,
@@ -539,17 +502,44 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn audit_persists_nonnegative_user_consumption_and_per_call_balances() {
-        let pool = crate::db::connect_memory().await.unwrap();
+    async fn seed_user_and_consumer(pool: &SqlitePool) {
         sqlx::query("INSERT INTO users(id,role,created_at) VALUES('user','user',0)")
-            .execute(&pool)
+            .execute(pool)
             .await
             .unwrap();
         sqlx::query("INSERT INTO consumers(id,user_id,name,prefix,secret_hash,created_at) VALUES('key','user','key','sk-test','hash',0)")
-            .execute(&pool)
+            .execute(pool)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn audit_persists_the_peak_tariff_flag() {
+        let pool = crate::db::connect_memory().await.unwrap();
+        seed_user_and_consumer(&pool).await;
+        let mut transaction = pool.begin().await.unwrap();
+        let mut peak = event("peak", "user", "key", 10, 1);
+        peak.peak = true;
+        insert(&mut transaction, &peak).await.unwrap();
+        insert(&mut transaction, &event("off-peak", "user", "key", 10, 1))
+            .await
+            .unwrap();
+        transaction.commit().await.unwrap();
+
+        let rows: Vec<(String, i64)> = sqlx::query_as("SELECT id,peak FROM api_calls ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            rows,
+            vec![("off-peak".to_owned(), 0), ("peak".to_owned(), 1)]
+        );
+    }
+
+    #[tokio::test]
+    async fn audit_persists_nonnegative_user_consumption_and_per_call_balances() {
+        let pool = crate::db::connect_memory().await.unwrap();
+        seed_user_and_consumer(&pool).await;
         let mut transaction = pool.begin().await.unwrap();
         insert(&mut transaction, &event("first", "user", "key", 125, 12))
             .await
@@ -603,7 +593,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO providers(id,name,account_id,access_token,refresh_token,owner_id,created_at,updated_at) VALUES('provider','provider','account','access','refresh','owner',0,0)")
+        sqlx::query("INSERT INTO providers(id,name,api_key,owner_id,created_at,updated_at) VALUES('provider','provider','sk-deepseek','owner',0,0)")
             .execute(&pool)
             .await
             .unwrap();
@@ -659,18 +649,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn response_transport_queues_bytes_and_archived_headers() {
+        let pool = crate::db::connect_memory().await.unwrap();
+        seed_user_and_consumer(&pool).await;
+        let write_gate = SqliteWriteGate::default();
+        let mut archived = event("archived", "user", "key", 0, 0);
+        archived.request_archive = true;
+        archived.request_headers_json =
+            r#"[["authorization","Bearer sk-secret"],["accept","*/*"]]"#.to_owned();
+        let batch = vec![
+            QueuedAudit::Event {
+                event: Box::new(archived),
+                _archive_budget: None,
+            },
+            QueuedAudit::ResponseTransport {
+                id: "archived".to_owned(),
+                bytes: 4_096,
+                encoding: Some("gzip".to_owned()),
+                downstream_response_headers_json: Some(
+                    r#"[["content-encoding","gzip"]]"#.to_owned(),
+                ),
+            },
+        ];
+        persist(&pool, &write_gate, &batch).await.unwrap();
+
+        let (bytes, encoding): (i64, Option<String>) = sqlx::query_as(
+            "SELECT response_transport_bytes,downstream_content_encoding FROM api_calls WHERE id='archived'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(bytes, 4_096);
+        assert_eq!(encoding.as_deref(), Some("gzip"));
+        let headers: Option<String> = sqlx::query_scalar(
+            "SELECT downstream_response_headers_json FROM request_archives WHERE api_call_id='archived'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(headers.as_deref(), Some(r#"[["content-encoding","gzip"]]"#));
+    }
+
+    #[tokio::test]
     async fn retention_cleanup_removes_only_expired_diagnostics() {
         let pool = crate::db::connect_memory().await.unwrap();
-        sqlx::query("INSERT INTO users(id,role,created_at) VALUES('user','user',0)")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO consumers(id,user_id,name,prefix,secret_hash,created_at) VALUES('key','user','key','sk-test','hash',0)")
-            .execute(&pool)
-            .await
-            .unwrap();
+        seed_user_and_consumer(&pool).await;
         for (id, created_at) in [("expired", 0_i64), ("retained", 200_000_i64)] {
-            sqlx::query("INSERT INTO api_calls(id,request_id,consumer_id,user_id,method,path,status,latency_ms,created_at) VALUES(?,?, 'key','user','POST','/v1/responses',200,1,?)")
+            sqlx::query("INSERT INTO api_calls(id,request_id,consumer_id,user_id,method,path,status,latency_ms,created_at) VALUES(?,?, 'key','user','POST','/v1/chat/completions',200,1,?)")
                 .bind(id)
                 .bind(id)
                 .bind(created_at)
@@ -701,18 +726,11 @@ mod tests {
     #[tokio::test]
     async fn audit_and_provider_maintenance_share_the_write_gate() {
         let path = std::env::temp_dir().join(format!(
-            "openai-lb-audit-maintenance-{}.sqlite3",
+            "deepseek-lb-audit-maintenance-{}.sqlite3",
             uuid::Uuid::new_v4()
         ));
         let pool = crate::db::connect_test_file(&path).await.unwrap();
-        sqlx::query("INSERT INTO users(id,role,created_at) VALUES('user','user',0)")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO consumers(id,user_id,name,prefix,secret_hash,created_at) VALUES('key','user','key','sk-test','hash',0)")
-            .execute(&pool)
-            .await
-            .unwrap();
+        seed_user_and_consumer(&pool).await;
 
         let write_gate = SqliteWriteGate::default();
         let batch = vec![QueuedAudit::Event {

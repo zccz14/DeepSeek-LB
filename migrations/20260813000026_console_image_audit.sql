@@ -1,2 +1,0 @@
-ALTER TABLE consumers
-ADD COLUMN is_system INTEGER NOT NULL DEFAULT 0 CHECK(is_system IN (0,1));

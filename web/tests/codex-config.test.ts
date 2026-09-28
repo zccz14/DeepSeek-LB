@@ -18,7 +18,7 @@ test("writes the required Codex provider configuration", () => {
 
 [model_providers.ntnl-openai]
 name = "NTNL OpenAI"
-base_url = "https://openai.ntnl.io/v1"
+base_url = "https://deepseek.ntnl.io/v1"
 experimental_bearer_token = "sk-example-token"
 wire_api = "responses"
 `
@@ -26,7 +26,7 @@ wire_api = "responses"
   assert.equal(parse(updated).model_provider, "ntnl-openai")
 })
 
-test("preserves unrelated settings and updates an existing OpenAI-LB provider", () => {
+test("preserves unrelated settings and updates an existing DeepSeek-LB provider", () => {
   const content = `approval_policy = "never"
 
 [features]
@@ -50,7 +50,7 @@ unified_exec = true
 
 [model_providers.ntnl-openai]
 name = "NTNL OpenAI"
-base_url = "https://openai.ntnl.io/v1"
+base_url = "https://deepseek.ntnl.io/v1"
 custom_setting = "keep me"
 experimental_bearer_token = "sk-new-token"
 wire_api = "responses"

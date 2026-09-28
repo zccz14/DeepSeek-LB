@@ -28,7 +28,7 @@ test("writes the NTNL OpenAI DSH provider without replacing other settings", () 
     displayName: "NTNL OpenAI",
     apiKeyEnv: "NTNL_OPENAI_API_KEY",
     api: "openai-responses",
-    baseURL: "https://openai.ntnl.io/v1",
+    baseURL: "https://deepseek.ntnl.io/v1",
     models: [
       { id: "gpt-5.6-terra", name: "GPT 5.6 Terra" },
       { id: "gpt-4o-transcribe", name: "GPT 4o Transcribe" },
