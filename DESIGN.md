@@ -1,6 +1,6 @@
 ---
-name: OpenAI-LB
-description: Calm, precise operations console for the CodeX OAuth load balancer
+name: DeepSeek-LB
+description: Calm, precise operations console for the DeepSeek API load balancer
 colors:
   background: "oklch(1 0 0)"
   foreground: "oklch(0.145 0 0)"
@@ -81,7 +81,7 @@ components:
     padding: "20px"
 ---
 
-# Design System: OpenAI-LB
+# Design System: DeepSeek-LB
 
 ## Overview
 
@@ -200,15 +200,15 @@ components:
 
 ### Audit Event Row
 
-审计行固定展示时间、租户、Consumer 前缀、上游提供商、能力/模型、状态、耗时、用量与请求 ID。原始详情在 Sheet 中按字段分组展示；敏感头与 OAuth 凭据必须脱敏，复制操作逐项授权并留下管理审计记录。
+审计行固定展示时间、租户、Consumer 前缀、上游提供商、模型、状态、耗时、用量与请求 ID。原始详情在 Sheet 中按字段分组展示；敏感头与上游密钥必须脱敏，复制操作逐项授权并留下管理审计记录。
 
 ## Do's and Don'ts
 
 ### Do:
 
 - **Do** 使用 shadcn/ui 现有组件和语义变体组合页面，保持同一操作在各处具有同一外观与行为。
-- **Do** 把上游提供商健康、限流余量、冷却截止时间、禁用原因和恢复条件放在同一可扫描上下文中。
-- **Do** 用表格承载 Consumer 用量和逐次调用审计，并提供时间、租户、Consumer、上游提供商、能力与结果筛选。
+- **Do** 把上游提供商健康、冷却截止时间、禁用原因和恢复条件放在同一可扫描上下文中。
+- **Do** 用表格承载 Consumer 用量和逐次调用审计，并提供时间、租户、Consumer、上游提供商、模型与结果筛选。
 - **Do** 使用 10px 面板圆角、8px 控件圆角、1px 边界和 20px 面板内边距作为默认密度基线。
 - **Do** 为键盘焦点、加载、空、错误、禁用和权限不足状态提供完整反馈；所有过渡尊重 `prefers-reduced-motion`。
 - **Do** 让中文和英文标签可增长，并为完整值提供 Tooltip、Sheet 或复制入口。

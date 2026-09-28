@@ -42,7 +42,7 @@ Basic error metadata is queued for persistence when the stream finishes or its
 consumer disconnects. It is independent of optional body archives and their
 preview limits. A captured upstream failure takes precedence over a later
 transport error or client cancellation. Usage already seen on the stream is kept.
-The same inspection is applied to buffered SSE and the image response path.
+The same inspection is applied to buffered SSE responses.
 
 Audit success means `status < 400` and both error columns are null. The one normal
 disconnect exception is `status = 499`, `error = client_cancelled`, and a null

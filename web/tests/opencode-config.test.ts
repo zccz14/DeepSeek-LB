@@ -5,34 +5,36 @@ import { parse } from "jsonc-parser"
 
 import { updateOpenCodeConfig } from "../src/lib/opencode-config.ts"
 
-test("writes an OpenAI-LB provider into an OpenCode JSONC configuration", () => {
-  const updated = updateOpenCodeConfig(
-    "",
-    "sk-example-token",
-    "https://openai.ntnl.io"
-  )
+const origin = "https://deepseek.ntnl.io"
+const models = ["deepseek-flash", "deepseek-v4-pro"]
+
+test("writes a DeepSeek-LB provider into an OpenCode JSONC configuration", () => {
+  const updated = updateOpenCodeConfig("", "sk-example-token", origin, models)
 
   assert.deepEqual(parse(updated), {
     provider: {
-      "openai-lb": {
+      "deepseek-lb": {
         npm: "@ai-sdk/openai-compatible",
-        name: "OpenAI-LB",
+        name: "DeepSeek-LB",
         options: {
-          baseURL: "https://openai.ntnl.io/v1",
+          baseURL: `${origin}/v1`,
           apiKey: "sk-example-token",
         },
-        models: { "gpt-5.4": { name: "gpt-5.4" } },
+        models: {
+          "deepseek-flash": { name: "deepseek-flash" },
+          "deepseek-v4-pro": { name: "deepseek-v4-pro" },
+        },
       },
     },
   })
 })
 
-test("preserves unrelated JSONC settings and OpenAI-LB provider fields", () => {
+test("preserves unrelated JSONC settings and provider fields", () => {
   const content = `{
   // Keep this comment and existing configuration.
   "theme": "dark",
     "provider": {
-      "openai-lb": {
+      "deepseek-lb": {
         "models": { "custom": { "name": "custom" } },
         "options": { "timeout": 100 },
         "custom": true
@@ -40,45 +42,32 @@ test("preserves unrelated JSONC settings and OpenAI-LB provider fields", () => {
   }
 }
 `
-  const updated = updateOpenCodeConfig(
-    content,
-    "sk-new-token",
-    "https://openai.ntnl.io"
-  )
+  const updated = updateOpenCodeConfig(content, "sk-new-token", origin, models)
   const config = parse(updated) as {
     theme: string
-    provider: { "openai-lb": Record<string, unknown> }
+    provider: { "deepseek-lb": Record<string, unknown> }
   }
 
   assert.match(updated, /Keep this comment/u)
   assert.equal(config.theme, "dark")
-  assert.equal(config.provider["openai-lb"].custom, true)
-  assert.deepEqual(config.provider["openai-lb"].models, {
-    custom: { name: "custom" },
-    "gpt-5.4": { name: "gpt-5.4" },
+  assert.equal(config.provider["deepseek-lb"].custom, true)
+  assert.deepEqual(config.provider["deepseek-lb"].models, {
+    "deepseek-flash": { name: "deepseek-flash" },
+    "deepseek-v4-pro": { name: "deepseek-v4-pro" },
   })
-  assert.deepEqual(config.provider["openai-lb"].options, {
+  assert.deepEqual(config.provider["deepseek-lb"].options, {
     timeout: 100,
-    baseURL: "https://openai.ntnl.io/v1",
+    baseURL: `${origin}/v1`,
     apiKey: "sk-new-token",
   })
 })
 
-test("rejects invalid JSONC and malformed Consumer tokens", () => {
+test("rejects invalid JSONC, empty model lists and malformed tokens", () => {
+  assert.throws(() => updateOpenCodeConfig("{", "sk-token", origin, models))
+  assert.throws(() => updateOpenCodeConfig("{", "sk-token", origin, []))
+  assert.throws(() => updateOpenCodeConfig("{}", "not-a-token", origin, models))
+  assert.throws(() => updateOpenCodeConfig("[]", "sk-token", origin, models))
   assert.throws(() =>
-    updateOpenCodeConfig("{", "sk-token", "https://openai.ntnl.io")
-  )
-  assert.throws(() =>
-    updateOpenCodeConfig("{}", "not-a-token", "https://openai.ntnl.io")
-  )
-  assert.throws(() =>
-    updateOpenCodeConfig("[]", "sk-token", "https://openai.ntnl.io")
-  )
-  assert.throws(() =>
-    updateOpenCodeConfig(
-      '{"provider":"invalid"}',
-      "sk-token",
-      "https://openai.ntnl.io"
-    )
+    updateOpenCodeConfig('{"provider":"invalid"}', "sk-token", origin, models)
   )
 })

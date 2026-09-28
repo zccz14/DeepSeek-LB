@@ -1,5 +1,5 @@
 use anyhow::Result;
-use openai_lb::{
+use deepseek_lb::{
     AppState,
     config::{BootstrapConfig, Config},
     db, router,
@@ -11,7 +11,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("openai_lb=info,tower_http=info")),
+                .unwrap_or_else(|_| EnvFilter::new("deepseek_lb=info,tower_http=info")),
         )
         .init();
     let bootstrap = BootstrapConfig::load()?;
@@ -19,9 +19,9 @@ async fn main() -> Result<()> {
     let pool = db::connect(&bootstrap.database_path).await?;
     let config = Config::load(bootstrap, &pool).await?;
     let state = AppState::new(config, pool).await?;
-    openai_lb::api::start_provider_capacity_polling(state.clone());
+    state.start_background_tasks();
     let listener = tokio::net::TcpListener::bind(listen).await?;
-    tracing::info!(%listen, "OpenAI-LB listening");
+    tracing::info!(%listen, "DeepSeek-LB listening");
     axum::serve(
         listener,
         router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),

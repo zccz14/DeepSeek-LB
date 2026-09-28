@@ -1,5 +1,7 @@
+// The audit detail response is a single large JSON literal.
+#![recursion_limit = "256"]
+
 pub mod api;
-mod audio_spool;
 pub mod audit;
 pub mod auth;
 pub mod balancer;
@@ -7,10 +9,9 @@ mod concurrency;
 pub mod config;
 pub mod crypto;
 pub mod db;
-pub mod identity;
 pub mod midas;
-pub mod oauth;
 pub mod payments;
+pub mod pricing;
 pub mod proxy;
 pub mod resources;
 
@@ -22,11 +23,10 @@ use axum::{
     body::{Body, BodyDataStream},
     extract::{Request, State},
     http::StatusCode,
-    middleware::{Next, from_fn, from_fn_with_state},
+    middleware::{Next, from_fn_with_state},
     response::{IntoResponse, Response},
     routing::{get, patch, post},
 };
-use dashmap::DashMap;
 use futures_util::StreamExt;
 use rust_embed::RustEmbed;
 use serde_json::json;
@@ -34,13 +34,7 @@ use sqlx::SqlitePool;
 use tower_http::{compression::CompressionLayer, limit::RequestBodyLimitLayer, trace::TraceLayer};
 
 use crate::audit::AuditWriter;
-use crate::{
-    auth::{ApiIdentity, AuthManager},
-    balancer::Balancer,
-    config::Config,
-    identity::DownstreamClient,
-    resources::ResourceMonitor,
-};
+use crate::{auth::AuthManager, balancer::Balancer, config::Config, resources::ResourceMonitor};
 
 #[derive(Clone, Default)]
 pub(crate) struct SqliteWriteGate(Arc<tokio::sync::Mutex<()>>);
@@ -57,34 +51,20 @@ pub struct AppState {
     pub db: SqlitePool,
     pub(crate) write_gate: SqliteWriteGate,
     pub client: reqwest::Client,
-    pub proxy_clients: Arc<DashMap<String, (String, reqwest::Client)>>,
     pub auth: AuthManager,
     pub audit: AuditWriter,
     pub balancer: Balancer,
     pub(crate) resources: Arc<tokio::sync::Mutex<ResourceMonitor>>,
-    pub refresh_locks: Arc<DashMap<String, Arc<tokio::sync::Mutex<()>>>>,
-    pub(crate) upstream_cookies: Arc<DashMap<String, proxy::UpstreamCookie>>,
-    pub(crate) realtime_console_sessions: Arc<DashMap<String, RealtimeConsoleSession>>,
-    pub(crate) oauth_flows: Arc<DashMap<String, OAuthFlow>>,
-}
-
-#[derive(Clone)]
-pub(crate) struct RealtimeConsoleSession {
-    pub identity: ApiIdentity,
-    pub call_id: String,
-    pub upstream_session_id: String,
-    pub expires_at: i64,
-}
-
-pub(crate) struct OAuthFlow {
-    pub verifier: String,
-    pub created_by: String,
-    /// Provider originator selected when this authorization attempt started.
-    pub originator: String,
-    pub expires_at: i64,
 }
 
 impl AppState {
+    /// Starts the periodic provider-maintenance loop. Production calls this once at startup;
+    /// tests drive [`crate::balancer::Balancer::maintain`] directly instead.
+    pub fn start_background_tasks(&self) {
+        self.balancer
+            .start_maintenance(self.db.clone(), self.write_gate.clone());
+    }
+
     pub async fn new(config: Config, db: SqlitePool) -> anyhow::Result<Self> {
         let client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
@@ -103,76 +83,25 @@ impl AppState {
         let balancer = Balancer::default();
         balancer.set_concurrency_limit(config.load().provider_concurrency_limit);
         balancer.hydrate(&db).await?;
-        balancer.start_maintenance(db.clone(), write_gate.clone());
-        #[cfg(not(test))]
-        audio_spool::start_cleanup(config.load().data_dir.clone());
         Ok(Self {
             config,
             db,
             write_gate,
             client,
-            proxy_clients: Arc::new(DashMap::new()),
             auth,
             audit,
             balancer,
             resources,
-            refresh_locks: Arc::new(DashMap::new()),
-            upstream_cookies: Arc::new(DashMap::new()),
-            realtime_console_sessions: Arc::new(DashMap::new()),
-            oauth_flows: Arc::new(DashMap::new()),
         })
-    }
-}
-
-impl AppState {
-    pub fn provider_client(
-        &self,
-        provider: &balancer::Provider,
-    ) -> Result<reqwest::Client, AppError> {
-        let Some(proxy_url) = provider.http_proxy_url.as_deref() else {
-            return Ok(self.client.clone());
-        };
-        if let Some(client) = self.proxy_clients.get(&provider.id)
-            && client.value().0 == proxy_url
-        {
-            return Ok(client.value().1.clone());
-        }
-        let proxy = reqwest::Proxy::all(proxy_url)
-            .map_err(|_| AppError::bad_request("invalid provider HTTP proxy URL"))?;
-        let client = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(600))
-            .proxy(proxy)
-            .build()?;
-        self.proxy_clients
-            .insert(provider.id.clone(), (proxy_url.to_owned(), client.clone()));
-        Ok(client)
     }
 }
 
 pub fn router(state: AppState) -> Router {
     let config = state.config.load();
     let response_limit = config.response_body_limit;
-    let image_limit = config.image_body_limit;
-    let audio_limit = config.audio_body_limit;
     drop(config);
     let browser_api = Router::new()
         .route("/api/me", get(api::me))
-        .route(
-            "/api/transcriptions",
-            post(proxy::handle_console_transcription)
-                .layer(RequestBodyLimitLayer::new(audio_limit)),
-        )
-        .route(
-            "/api/images/generations",
-            post(proxy::handle_console_image_generation)
-                .layer(RequestBodyLimitLayer::new(image_limit)),
-        )
-        .route(
-            "/api/realtime/calls",
-            post(proxy::handle_console_realtime_call)
-                .layer(RequestBodyLimitLayer::new(response_limit)),
-        )
         .route(
             "/api/consumers",
             get(api::list_consumers).post(api::create_consumer),
@@ -190,46 +119,20 @@ pub fn router(state: AppState) -> Router {
             "/api/providers",
             get(api::list_providers).post(api::create_provider),
         )
-        .route("/api/providers/usage", get(api::list_provider_usage))
-        .route("/api/provider-capacity", get(api::provider_capacity))
-        .route(
-            "/api/providers/circuit-events",
-            get(api::list_provider_circuit_summaries),
-        )
-        .route(
-            "/api/providers/rate-limit-resets",
-            get(api::list_provider_rate_limit_resets),
-        )
         .route(
             "/api/providers/{id}",
-            get(api::read_provider_tokens)
-                .put(api::replace_provider_tokens)
-                .patch(api::update_provider)
-                .delete(api::delete_provider),
+            patch(api::update_provider).delete(api::delete_provider),
         )
         .route(
-            "/api/providers/{id}/circuit-events",
-            get(api::list_provider_circuit_events),
-        )
-        .route(
-            "/api/providers/{id}/proxy-health",
-            post(api::provider_proxy_health),
+            "/api/providers/{id}/key",
+            get(api::read_provider_key).put(api::replace_provider_key),
         )
         .route("/api/providers/{id}/test", post(api::test_provider))
-        .route(
-            "/api/providers/{id}/rate-limit-resets/consume",
-            post(api::consume_provider_rate_limit_reset),
-        )
-        .route("/api/oauth/start", post(api::oauth_start))
-        .route("/api/oauth/complete", post(api::oauth_complete))
+        .route("/api/providers/{id}/balance", get(api::provider_balance))
         .route("/api/usage", get(api::usage))
         .route("/api/model-prices", get(api::model_prices))
         .route("/api/audit", get(api::audit))
         .route("/api/provider-audit", get(api::provider_audit))
-        .route(
-            "/api/model-downgrade-audit",
-            get(api::model_downgrade_audit),
-        )
         .route("/api/audit/{id}", get(api::audit_detail))
         .route(
             "/api/audit/{id}/bodies",
@@ -253,50 +156,29 @@ pub fn router(state: AppState) -> Router {
             "/api/settings/provider-concurrency",
             patch(api::update_provider_concurrency),
         )
-        .route(
-            "/api/settings/upstream-user-agent",
-            patch(api::update_upstream_user_agent),
-        )
-        .route(
-            "/api/settings/experimental-turn-state-312-filter",
-            patch(api::update_experimental_turn_state_312_filter),
-        )
         .route("/api/users", get(api::list_users))
         .route("/api/users/{id}", patch(api::update_user))
         .route_layer(from_fn_with_state(state.clone(), auth::authenticate));
 
     let consumer_api = Router::new()
         .route(
+            "/v1/chat/completions",
+            post(proxy::handle_json).layer(RequestBodyLimitLayer::new(response_limit)),
+        )
+        .route(
             "/v1/responses",
             post(proxy::handle_json).layer(RequestBodyLimitLayer::new(response_limit)),
         )
         .route(
-            "/v1/responses/compact",
+            "/chat/completions",
             post(proxy::handle_json).layer(RequestBodyLimitLayer::new(response_limit)),
         )
         .route(
-            "/backend-api/codex/responses",
+            "/responses",
             post(proxy::handle_json).layer(RequestBodyLimitLayer::new(response_limit)),
         )
-        .route(
-            "/backend-api/codex/responses/compact",
-            post(proxy::handle_json).layer(RequestBodyLimitLayer::new(response_limit)),
-        )
-        .route(
-            "/v1/audio/transcriptions",
-            post(proxy::handle_audio).layer(RequestBodyLimitLayer::new(audio_limit)),
-        )
-        .route(
-            "/v1/images/generations",
-            post(proxy::handle_json).layer(RequestBodyLimitLayer::new(image_limit)),
-        )
-        .route(
-            "/v1/realtime/calls",
-            post(proxy::handle_realtime_call).layer(RequestBodyLimitLayer::new(response_limit)),
-        )
-        .route("/v1/realtime", get(proxy::handle_realtime_websocket))
         .route("/v1/models", get(proxy::handle_models))
-        .route_layer(from_fn(require_session_id));
+        .route("/models", get(proxy::handle_models));
 
     Router::new()
         .route("/api/health", get(api::health))
@@ -313,10 +195,6 @@ pub fn router(state: AppState) -> Router {
         )
         .merge(browser_api)
         .merge(consumer_api)
-        .route(
-            "/api/realtime",
-            get(proxy::handle_console_realtime_websocket),
-        )
         .fallback(static_asset)
         .layer(axum::extract::DefaultBodyLimit::disable())
         .layer(CompressionLayer::new())
@@ -328,41 +206,11 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-async fn require_session_id(request: Request, next: Next) -> Response {
-    // INVARIANT: Pi Agent session ids are validated by the proxy itself, inside the audited region,
-    // so a request Pi would not have produced (one without a UUIDv7) is answered with a 400 that also
-    // reaches the call audit. Every other family is only required to present the header at all.
-    let pi_client = identity::identify_client(request.headers())
-        .is_ok_and(|client| client == DownstreamClient::Pi);
-    let path = request.uri().path().to_owned();
-    if pi_client && identity::is_pi_responses_path(&path) {
-        return next.run(request).await;
-    }
-    // Image generation is a one-off request, so its caller is never required to present a session
-    // id either; the proxy mints a UUIDv7 for the upstream request instead.
-    if path == "/v1/images/generations" {
-        return next.run(request).await;
-    }
-    let has_session_id = request
-        .headers()
-        .get("session-id")
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| !value.trim().is_empty());
-    if !has_session_id {
-        return AppError::bad_request("session-id request header is required").into_response();
-    }
-    next.run(request).await
-}
-
 async fn record_response_transport(
     State(audit): State<AuditWriter>,
     request: Request,
     next: Next,
 ) -> Response {
-    let request_codex_turn_state_length = request
-        .headers()
-        .get("x-codex-turn-state")
-        .map(|value| value.as_bytes().len() as i64);
     let response = next.run(request).await;
     let (parts, body) = response.into_parts();
     let Some(id) = parts.extensions.get::<proxy::AuditTransportId>().cloned() else {
@@ -370,7 +218,7 @@ async fn record_response_transport(
     };
     let mut parts = parts;
     parts.headers.insert(
-        "x-openai-lb-request-id",
+        "x-deepseek-lb-request-id",
         axum::http::HeaderValue::from_str(&id.id).expect("audit IDs are valid header values"),
     );
     let encoding = parts
@@ -379,11 +227,6 @@ async fn record_response_transport(
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned)
         .or_else(|| Some("identity".to_owned()));
-    let codex_turn_state_length = parts
-        .headers
-        .get("x-codex-turn-state")
-        .map(|value| value.as_bytes().len() as i64)
-        .or(request_codex_turn_state_length);
     let downstream_response_headers_json = id
         .diagnostics_enabled
         .then(|| proxy::archive_headers(&parts.headers));
@@ -393,7 +236,6 @@ async fn record_response_transport(
         id: id.id,
         bytes: 0,
         encoding,
-        codex_turn_state_length,
         headers: downstream_response_headers_json,
     };
     let output = async_stream::stream! {
@@ -413,7 +255,6 @@ struct ResponseTransportGuard {
     id: String,
     bytes: i64,
     encoding: Option<String>,
-    codex_turn_state_length: Option<i64>,
     headers: Option<String>,
 }
 
@@ -427,7 +268,6 @@ impl Drop for ResponseTransportGuard {
             std::mem::take(&mut self.id),
             self.bytes,
             self.encoding.take(),
-            self.codex_turn_state_length,
             self.headers.take(),
         );
     }
@@ -642,27 +482,7 @@ internal_from!(
 );
 
 #[cfg(test)]
-pub(crate) async fn test_state(oauth_token_url: &str) -> AppState {
-    test_state_with_upstream(oauth_token_url, "http://upstream.invalid").await
-}
-
-/// Downstream identity that stands in for the first seeded test user.
-#[cfg(test)]
-pub(crate) fn test_downstream() -> balancer::Downstream<'static> {
-    balancer::Downstream::new("user-1", identity::CODEX_ORIGINATOR)
-}
-
-/// Downstream identity owned by the default test provider owner (`owner`).
-#[cfg(test)]
-pub(crate) fn owner_downstream() -> balancer::Downstream<'static> {
-    balancer::Downstream::new("owner", identity::CODEX_ORIGINATOR)
-}
-
-#[cfg(test)]
-pub(crate) async fn test_state_with_upstream(
-    oauth_token_url: &str,
-    upstream_base: &str,
-) -> AppState {
+pub(crate) async fn test_state(upstream_base: &str) -> AppState {
     let pool = db::connect_memory().await.unwrap();
     let config = Config {
         listen: "127.0.0.1:0".parse().unwrap(),
@@ -672,24 +492,13 @@ pub(crate) async fn test_state_with_upstream(
         auth_issuer: None,
         auth_audience: None,
         upstream_base: upstream_base.to_owned(),
-        upstream_openai_beta: None,
-        upstream_user_agent: None,
-        upstream_user_agents: config::UpstreamUserAgents::default(),
-        experimental_filter_codex_turn_state_312: false,
-        image_host_model: "gpt-5.4".to_owned(),
         available_model_ids: config::default_available_model_ids(),
         allow_all_users_debt: false,
-        oauth_authorize_url: "http://auth.invalid/oauth/authorize".to_owned(),
-        oauth_token_url: oauth_token_url.to_owned(),
-        oauth_redirect_uri: "http://localhost:1455/auth/callback".to_owned(),
-        oauth_client_id: "test-client".to_owned(),
         response_body_limit: 1024 * 1024,
-        image_body_limit: 16 * 1024 * 1024,
-        audio_body_limit: 1024 * 1024,
         affinity_ttl_seconds: 3600,
         provider_concurrency_limit: 3,
         request_archive_retention_days: 7,
-        model_price_multiplier_nanos: 100_000_000,
+        model_price_multiplier_nanos: 1_000_000_000,
         midas_api_base: "http://midas.invalid/api".to_owned(),
         midas_fund_user_id: None,
         midas_fund_api_key: None,
@@ -708,7 +517,7 @@ mod routing_tests {
 
     #[tokio::test]
     async fn unknown_api_namespace_returns_json_not_spa() {
-        let state = crate::test_state("http://token.invalid").await;
+        let state = crate::test_state("http://upstream.invalid").await;
         for path in ["/api/missing", "/v1/missing", "/backend-api/missing"] {
             let response = crate::router(state.clone())
                 .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
@@ -729,24 +538,21 @@ mod routing_tests {
     }
 
     #[tokio::test]
-    async fn consumer_api_requests_require_session_id_header() {
-        let state = crate::test_state("http://token.invalid").await;
-        let response = crate::router(state)
-            .oneshot(
-                Request::builder()
-                    .method("GET")
-                    .uri("/v1/models")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
+    async fn consumer_endpoints_require_a_consumer_credential() {
+        let state = crate::test_state("http://upstream.invalid").await;
+        let mut request = Request::builder()
+            .method("POST")
+            .uri("/v1/chat/completions")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"model":"deepseek-flash","messages":[]}"#))
             .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(
-            body["error"]["message"],
-            "session-id request header is required"
-        );
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+                [127, 0, 0, 1],
+                40_000,
+            ))));
+        let response = crate::router(state).oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }

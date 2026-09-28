@@ -2,7 +2,8 @@ import { isMap, parseDocument } from "yaml"
 
 import { isConsumerToken } from "./codex-config.ts"
 
-const providerId = "ntnl-openai"
+const providerId = "deepseek-lb"
+const credentialEnv = "DEEPSEEK_LB_API_KEY"
 
 export type DshModel = { id: string; name: string }
 
@@ -13,7 +14,8 @@ export function dshModels(modelIds: string[]): DshModel[] {
 export function updateDshSettings(
   content: string,
   token: string,
-  models: DshModel[]
+  models: DshModel[],
+  origin: string
 ) {
   assertConsumerToken(token)
   if (models.length === 0)
@@ -31,10 +33,10 @@ export function updateDshSettings(
   )
   document.setIn(["llm-pi-ai", "providers", providerId], {
     ...existing,
-    displayName: "NTNL OpenAI",
-    apiKeyEnv: "NTNL_OPENAI_API_KEY",
+    displayName: "DeepSeek-LB",
+    apiKeyEnv: credentialEnv,
     api: "openai-responses",
-    baseURL: "https://openai.ntnl.io/v1",
+    baseURL: `${origin}/v1`,
     models,
   })
   return serializeYaml(document, content)
@@ -45,7 +47,7 @@ export function updateDshCredentials(content: string, token: string) {
 
   const document = parseYaml(content, ".credentials.yaml")
   assertMapOrMissing(document.contents, ".credentials.yaml")
-  document.setIn(["NTNL_OPENAI_API_KEY"], token)
+  document.setIn([credentialEnv], token)
   return serializeYaml(document, content)
 }
 
@@ -85,9 +87,10 @@ function serializeYaml(
 }
 
 function dshModelName(modelId: string) {
-  const [family, version, ...suffix] = modelId.split("-")
-  const familyName = family.toLowerCase() === "gpt" ? "GPT" : title(family)
-  return [familyName, version, ...suffix.map(title)].filter(Boolean).join(" ")
+  return modelId
+    .split("-")
+    .map((part) => title(part))
+    .join(" ")
 }
 
 function title(value: string) {

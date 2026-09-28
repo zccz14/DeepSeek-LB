@@ -4,7 +4,7 @@ import { compareHeaderSnapshots } from "../src/lib/header-comparison.ts"
 
 const upstream = JSON.stringify([
   ["Content-Type", "text/event-stream"],
-  ["x-codex-turn-state", "turn-1"],
+  ["x-deepseek-session-id", "turn-1"],
 ])
 
 test("missing downstream diagnostics do not report every upstream header as removed", () => {
@@ -33,7 +33,7 @@ test("compares available values case-insensitively and retains real differences"
     upstream,
     JSON.stringify([
       ["content-type", "text/event-stream"],
-      ["x-codex-turn-state", "turn-2"],
+      ["x-deepseek-session-id", "turn-2"],
     ])
   )
   assert.deepEqual(

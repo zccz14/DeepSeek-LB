@@ -8,14 +8,14 @@ product
 
 产品服务两类用户：
 
-- root 与管理员负责全局配置和审计，并可管理全部 CodeX OAuth 上游提供商。
+- root 与管理员负责全局配置和审计，并可管理全部 DeepSeek 上游提供商。
 - 租户用户通过 Auth Mini 注册和登录，管理自己创建的上游提供商及其租赁收益；同时为每个 AI App 创建、吊销独立的 Consumer，并按 Consumer 查看调用量、成功率和错误记录。
 
 两类用户都处于明确的运维或集成任务中；界面必须让当前租户、Consumer、上游提供商和请求上下文始终清晰。
 
 ## Product Purpose
 
-本产品是一个以 Rust 编写、以 SQLite 持久化、最终可作为单一 Binary 部署的 CodeX OAuth 反向代理与负载均衡系统。用户可使用多组 `(access_key, refresh_key)` 注册自己拥有的上游提供商，root 与管理员可管理全局 Provider 池；系统只代理 OpenAI / CodeX 能力，不兼容其他 AI 厂商协议，同时覆盖文本、推理、实时、语音、图像及后续 OpenAI 模态，而非绑定某一种 LLM 请求形态。
+本产品是一个以 Rust 编写、以 SQLite 持久化、最终可作为单一 Binary 部署的 DeepSeek API 反向代理与负载均衡系统。用户用一条 DeepSeek API Key 注册一个上游提供商，root 与管理员可管理全局 Provider 池；系统只代理 DeepSeek 接口（OpenAI 兼容的对话补全、Responses API 与模型列表），不兼容其他 AI 厂商协议。
 
 每个上游 Provider 有 `public` / `private` 可见性，默认 `private`：`private` Provider 只服务其拥有者名下的 Consumer，`public` 才进入全站共享上游池；拥有者可在 Provider 页面自行切换。
 

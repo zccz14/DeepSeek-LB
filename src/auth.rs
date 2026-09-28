@@ -27,7 +27,6 @@ pub struct ApiIdentity {
     pub consumer_id: String,
     pub user_id: String,
     pub request_archive: bool,
-    pub intercept_degradation: bool,
     pub is_admin: bool,
     pub allow_debt: bool,
 }
@@ -86,7 +85,7 @@ impl AuthManager {
             .read()
             .await
             .clone()
-            .ok_or_else(|| AppError::unavailable("OpenAI-LB setup is not complete"))
+            .ok_or_else(|| AppError::unavailable("DeepSeek-LB setup is not complete"))
     }
 }
 
@@ -167,7 +166,7 @@ pub async fn api_identity(state: &AppState, headers: &HeaderMap) -> Result<ApiId
         return Err(AppError::unauthorized("invalid consumer credential"));
     }
     let row = sqlx::query(
-        "SELECT k.id,k.user_id,u.role,k.request_archive,k.intercept_degradation,u.allow_debt FROM consumers k JOIN users u ON u.id=k.user_id WHERE k.secret_hash=? AND k.is_deleted=0 AND k.is_disabled=0",
+        "SELECT k.id,k.user_id,u.role,k.request_archive,u.allow_debt FROM consumers k JOIN users u ON u.id=k.user_id WHERE k.secret_hash=? AND k.is_deleted=0 AND k.is_disabled=0",
     )
     .bind(consumer_secret_hash(secret))
     .fetch_optional(&state.db)
@@ -178,9 +177,8 @@ pub async fn api_identity(state: &AppState, headers: &HeaderMap) -> Result<ApiId
         consumer_id: row.get(0),
         user_id: row.get(1),
         request_archive: row.get::<i64, _>(3) != 0,
-        intercept_degradation: row.get::<i64, _>(4) != 0,
         is_admin: role != "user",
-        allow_debt: row.get::<i64, _>(5) != 0,
+        allow_debt: row.get::<i64, _>(4) != 0,
     })
 }
 
@@ -268,7 +266,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let issuer = format!("http://{}", listener.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(listener, jwks).await.unwrap() });
-        let layer = create_layer(&issuer, "openai-lb.test".to_owned())
+        let layer = create_layer(&issuer, "deepseek-lb.test".to_owned())
             .await
             .unwrap();
         assert!(
@@ -277,7 +275,7 @@ mod tests {
                 .verify(&browser_token(
                     &signing,
                     &issuer,
-                    serde_json::json!(["openai-lb.test", "linkit.ntnl.io"])
+                    serde_json::json!(["deepseek-lb.test", "linkit.ntnl.io"])
                 ))
                 .await
                 .is_ok()
@@ -318,7 +316,7 @@ mod tests {
         let state = crate::test_state("http://token.invalid").await;
         state
             .auth
-            .configure(issuer, "openai-lb.test".to_owned())
+            .configure(issuer, "deepseek-lb.test".to_owned())
             .await
             .unwrap();
         let response = crate::router(state)

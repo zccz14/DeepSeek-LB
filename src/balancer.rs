@@ -12,7 +12,6 @@ use reqwest::StatusCode;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::{FromRow, Row};
-use uuid::Uuid;
 
 use crate::{
     AppError, AppState, SqliteWriteGate,
@@ -23,12 +22,8 @@ use crate::{
 pub struct Provider {
     pub id: String,
     pub name: String,
-    pub account_id: String,
     #[serde(skip_serializing)]
-    pub access_token: String,
-    #[serde(skip_serializing)]
-    pub refresh_token: String,
-    pub expires_at: Option<i64>,
+    pub api_key: String,
     pub status: String,
     pub manual_disabled: i64,
     pub cooldown_until: Option<i64>,
@@ -38,15 +33,10 @@ pub struct Provider {
     pub created_at: i64,
     pub updated_at: i64,
     pub owner_id: Option<String>,
-    /// Client identity this provider presents upstream; see [`crate::identity`].
-    pub originator: String,
-    pub allow_other_originator: bool,
     /// [`PROVIDER_VISIBILITY_PUBLIC`] or [`PROVIDER_VISIBILITY_PRIVATE`].
     pub visibility: String,
     pub official_provided_usd_nanos: i64,
     pub actual_provided_usd_nanos: i64,
-    #[serde(skip_serializing)]
-    pub http_proxy_url: Option<String>,
     #[serde(skip_serializing)]
     pub is_deleted: i64,
 }
@@ -76,16 +66,6 @@ struct ProviderUpdate {
     last_error: Option<String>,
     last_used_at: Option<i64>,
     updated_at: i64,
-    circuit: Option<CircuitOpen>,
-}
-
-#[derive(Clone, PartialEq)]
-struct CircuitOpen {
-    id: String,
-    cause: String,
-    rate_limit_json: String,
-    opened_at: i64,
-    cooldown_until: i64,
 }
 
 impl ProviderUpdate {
@@ -94,7 +74,6 @@ impl ProviderUpdate {
             self.status = next.status;
             self.cooldown_until = next.cooldown_until;
             self.last_error = next.last_error;
-            self.circuit = next.circuit;
         }
         self.rate_limit_json = next.rate_limit_json;
         self.last_used_at = next.last_used_at.or(self.last_used_at);
@@ -104,9 +83,7 @@ impl ProviderUpdate {
 
 pub struct Lease {
     pub provider: Provider,
-    pub originator_fallback_reason: Option<&'static str>,
-    pub access_token: String,
-    pub refresh_token: String,
+    pub api_key: String,
     permit: Option<Permit>,
 }
 
@@ -115,16 +92,11 @@ pub struct Lease {
 pub struct Downstream<'a> {
     /// `user_id` of the Consumer that authenticates the request.
     owner_id: &'a str,
-    /// Originator the request is accepted as; see [`crate::identity`].
-    originator: &'a str,
 }
 
 impl<'a> Downstream<'a> {
-    pub fn new(owner_id: &'a str, originator: &'a str) -> Self {
-        Self {
-            owner_id,
-            originator,
-        }
+    pub fn new(owner_id: &'a str) -> Self {
+        Self { owner_id }
     }
 }
 
@@ -151,16 +123,6 @@ fn provider_is_visible(provider: &Provider, downstream: Downstream<'_>) -> bool 
 }
 
 impl Lease {
-    pub fn upstream_user_agent<'a>(&self, config: &'a crate::config::Config) -> Option<&'a str> {
-        config
-            .upstream_user_agent_for(&self.provider.originator)
-            .or_else(|| {
-                self.originator_fallback_reason.map(|_| {
-                    crate::identity::default_upstream_user_agent(&self.provider.originator)
-                })
-            })
-    }
-
     pub(crate) fn release(&mut self) {
         self.permit.take();
     }
@@ -212,17 +174,16 @@ impl Balancer {
             .find(|provider| {
                 provider.id == provider_id
                     && provider.is_deleted == 0
-                    && originator_allows(provider, downstream.originator)
                     && provider_is_visible(provider, downstream)
             })
             .cloned()
             .ok_or_else(|| {
                 AppError::unavailable_with_reason(
-                    "no available provider for this downstream client",
-                    "provider_identity_mismatch",
+                    "provider is no longer available for this downstream",
+                    "provider_not_available",
                 )
             })?;
-        Ok(Self::lease(provider, permit, downstream.originator))
+        Ok(Self::lease(provider, permit))
     }
 
     pub async fn select(
@@ -239,7 +200,7 @@ impl Balancer {
                 let eligible = eligible_providers(&providers, excluded, downstream, now);
                 if eligible.is_empty() {
                     return Err(AppError::unavailable_with_reason(
-                        "no available provider for this downstream client",
+                        "no available DeepSeek provider",
                         "provider_pool_empty",
                     ));
                 }
@@ -267,7 +228,7 @@ impl Balancer {
                         state.config.load().affinity_ttl_seconds,
                     );
                 }
-                return Ok(Self::lease(provider, permit, downstream.originator));
+                return Ok(Self::lease(provider, permit));
             }
             // A recovered exact pool or revoked fallback permission invalidates a queued choice.
             // Drop this permit before selecting or waiting on another provider.
@@ -275,17 +236,9 @@ impl Balancer {
         }
     }
 
-    fn lease(provider: Provider, permit: Permit, originator: &str) -> Lease {
-        let originator_fallback_reason =
-            (provider.originator != originator).then_some(if originator.is_empty() {
-                "downstream_client_unknown"
-            } else {
-                "provider_pool_empty"
-            });
+    fn lease(provider: Provider, permit: Permit) -> Lease {
         Lease {
-            originator_fallback_reason,
-            access_token: provider.access_token.clone(),
-            refresh_token: provider.refresh_token.clone(),
+            api_key: provider.api_key.clone(),
             provider,
             permit: Some(permit),
         }
@@ -433,12 +386,6 @@ impl Balancer {
         let _write = write_gate.lock().await;
         let mut transaction = pool.begin().await?;
         for (id, update) in &updates {
-            if let Some(circuit) = &update.circuit {
-                sqlx::query("INSERT INTO provider_circuit_events(id,provider_id,cause,rate_limit_json,opened_at,cooldown_until) SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM providers WHERE id=? AND manual_disabled=0 AND is_deleted=0) ON CONFLICT(provider_id) WHERE closed_at IS NULL DO UPDATE SET cause=excluded.cause,rate_limit_json=excluded.rate_limit_json,cooldown_until=MAX(provider_circuit_events.cooldown_until,excluded.cooldown_until)")
-                    .bind(&circuit.id).bind(id).bind(&circuit.cause).bind(&circuit.rate_limit_json)
-                    .bind(circuit.opened_at).bind(circuit.cooldown_until).bind(id)
-                    .execute(&mut *transaction).await?;
-            }
             sqlx::query("UPDATE providers SET status=CASE WHEN manual_disabled=1 THEN 'disabled' WHEN ? IS NULL THEN status ELSE ? END,cooldown_until=CASE WHEN manual_disabled=1 THEN NULL WHEN ? IS NULL THEN cooldown_until ELSE ? END,rate_limit_json=?,last_error=CASE WHEN ? IS NULL THEN last_error ELSE ? END,last_used_at=COALESCE(?,last_used_at),updated_at=? WHERE id=? AND is_deleted=0")
                 .bind(&update.status).bind(&update.status).bind(&update.status).bind(update.cooldown_until)
                 .bind(&update.rate_limit_json).bind(&update.status).bind(&update.last_error)
@@ -536,27 +483,13 @@ fn eligible_providers(
     downstream: Downstream<'_>,
     now: i64,
 ) -> Vec<Provider> {
-    let mut eligible: Vec<_> = providers
+    providers
         .iter()
         .filter(|provider| provider_is_available(provider, now))
         .filter(|provider| excluded != Some(provider.id.as_str()))
-        .filter(|provider| originator_allows(provider, downstream.originator))
         .filter(|provider| provider_is_visible(provider, downstream))
         .cloned()
-        .collect();
-    // INVARIANT: Affinity and load balancing operate inside one tier, never across both.
-    if eligible
-        .iter()
-        .any(|provider| provider.originator == downstream.originator)
-    {
-        eligible.retain(|provider| provider.originator == downstream.originator);
-    }
-    eligible
-}
-
-/// Whether a provider may present itself to a downstream request of this client family.
-fn originator_allows(provider: &Provider, originator: &str) -> bool {
-    provider.originator == originator || provider.allow_other_originator
+        .collect()
 }
 
 fn provider_is_available(provider: &Provider, now: i64) -> bool {
@@ -590,37 +523,29 @@ pub async fn track_response(
             status: Some("auth_error".to_owned()),
             cooldown_until: None,
             rate_limit_json: rate_json,
-            last_error: Some(format!("upstream HTTP {}", status.as_u16())),
+            last_error: Some("upstream API key was rejected".to_owned()),
             last_used_at: Some(now),
             updated_at: now,
-            circuit: None,
         },
-        429 => match usage_limit_cooldown(error.as_ref(), now) {
-            Some(cooldown) => ProviderUpdate {
+        402 => ProviderUpdate {
+            status: Some("balance_error".to_owned()),
+            cooldown_until: None,
+            rate_limit_json: rate_json,
+            last_error: Some("upstream balance is insufficient".to_owned()),
+            last_used_at: Some(now),
+            updated_at: now,
+        },
+        429 => {
+            let cooldown_until = now + RATE_LIMIT_COOLDOWN_SECONDS;
+            ProviderUpdate {
                 status: Some("cooldown".to_owned()),
-                cooldown_until: Some(cooldown),
+                cooldown_until: Some(cooldown_until),
                 rate_limit_json: rate_json.clone(),
-                last_error: Some("usage limit reached".to_owned()),
+                last_error: Some("rate limit reached".to_owned()),
                 last_used_at: Some(now),
                 updated_at: now,
-                circuit: Some(CircuitOpen {
-                    id: Uuid::new_v4().to_string(),
-                    cause: "usage_limit_reached".to_owned(),
-                    rate_limit_json: rate_json,
-                    opened_at: now,
-                    cooldown_until: cooldown,
-                }),
-            },
-            None => ProviderUpdate {
-                status: None,
-                cooldown_until: None,
-                rate_limit_json: rate_json,
-                last_error: None,
-                last_used_at: Some(now),
-                updated_at: now,
-                circuit: None,
-            },
-        },
+            }
+        }
         _ => ProviderUpdate {
             status: None,
             cooldown_until: None,
@@ -628,41 +553,30 @@ pub async fn track_response(
             last_error: None,
             last_used_at: Some(now),
             updated_at: now,
-            circuit: None,
         },
     };
     state.balancer.observe(provider_id, update);
     Ok(())
 }
 
-fn usage_limit_cooldown(error: Option<&serde_json::Value>, now: i64) -> Option<i64> {
-    let error = error?;
-    (error.get("type").and_then(serde_json::Value::as_str) == Some("usage_limit_reached"))
-        .then_some(())?;
-    error
-        .get("resets_at")
-        .and_then(serde_json::Value::as_i64)
-        .filter(|reset| *reset > now)
-        .or_else(|| {
-            error
-                .get("resets_in_seconds")
-                .and_then(serde_json::Value::as_i64)
-                .filter(|seconds| *seconds > 0)
-                .and_then(|seconds| now.checked_add(seconds))
-        })
-}
+// ASSUMPTION: DeepSeek 429 responses carry no reset time, so a rejected request is treated as a
+// short-lived saturation signal and the provider is cooled down for a fixed window before it is
+// eligible again. If the window is too short the provider simply receives another 429 and cools
+// down again; if it is too long other providers absorb the traffic in the meantime.
+const RATE_LIMIT_COOLDOWN_SECONDS: i64 = 30;
 
+// tests replaced below
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::identity::CODEX_ORIGINATOR;
+    use crate::concurrency::ProviderLoad;
     use serde_json::json;
 
     /// Owner of the providers and Consumer used by routing tests.
     const TEST_OWNER: &str = "test-owner";
 
     fn test_downstream() -> Downstream<'static> {
-        Downstream::new(TEST_OWNER, CODEX_ORIGINATOR)
+        Downstream::new(TEST_OWNER)
     }
 
     async fn seed_test_owner(state: &AppState) {
@@ -673,32 +587,17 @@ mod tests {
             .unwrap();
     }
 
-    #[test]
-    fn usage_limit_response_sets_cooldown_from_resets_at() {
-        let error = json!({
-            "type": "usage_limit_reached",
-            "resets_at": 1_786_159_988_i64,
-            "resets_in_seconds": 31_710,
-        });
-        assert_eq!(
-            usage_limit_cooldown(Some(&error), 1_786_128_278),
-            Some(1_786_159_988)
-        );
-    }
-
-    #[test]
-    fn usage_limit_response_uses_resets_in_seconds_without_resets_at() {
-        let error = json!({
-            "type": "usage_limit_reached",
-            "resets_in_seconds": 31_710,
-        });
-        assert_eq!(usage_limit_cooldown(Some(&error), 100), Some(31_810));
-    }
-
-    #[test]
-    fn rate_limit_without_a_usage_reset_does_not_set_cooldown() {
-        let error = json!({"type": "rate_limit_exceeded"});
-        assert_eq!(usage_limit_cooldown(Some(&error), 100), None);
+    async fn seed_provider(state: &AppState, id: &str, api_key: &str, owner_id: &str) {
+        sqlx::query("INSERT INTO providers(id,name,api_key,status,owner_id,created_at,updated_at) VALUES(?,?,?,'active',?,?,?)")
+            .bind(id)
+            .bind(id)
+            .bind(api_key)
+            .bind(owner_id)
+            .bind(0)
+            .bind(0)
+            .execute(&state.db)
+            .await
+            .unwrap();
     }
 
     #[test]
@@ -706,14 +605,18 @@ mod tests {
         assert_ne!(affinity_hash("session-secret"), "session-secret");
     }
 
+    #[test]
+    fn rate_limit_tracking_uses_a_fixed_cooldown_window() {
+        assert_eq!(RATE_LIMIT_COOLDOWN_SECONDS, 30);
+    }
+
     #[tokio::test]
-    async fn queued_requests_recheck_credentials_and_skip_deleted_providers() {
+    async fn queued_requests_recheck_api_keys_and_skip_deleted_providers() {
         use futures_util::poll;
-        let state = crate::test_state("http://token.invalid").await;
+        let state = crate::test_state("http://upstream.invalid").await;
         seed_test_owner(&state).await;
         for id in ["a", "b"] {
-            sqlx::query("INSERT INTO providers(id,name,account_id,access_token,refresh_token,owner_id,created_at,updated_at) VALUES(?,?,?,'old-access','refresh',?,0,0)")
-                .bind(id).bind(id).bind(id).bind(TEST_OWNER).execute(&state.db).await.unwrap();
+            seed_provider(&state, id, "sk-old", TEST_OWNER).await;
         }
         state.balancer.reload_providers(&state.db).await.unwrap();
         state.balancer.set_concurrency_limit(1);
@@ -730,7 +633,7 @@ mod tests {
             test_downstream(),
         ));
         assert!(poll!(&mut waiting).is_pending());
-        sqlx::query("UPDATE providers SET access_token='new-access' WHERE id='a'")
+        sqlx::query("UPDATE providers SET api_key='sk-new' WHERE id='a'")
             .execute(&state.db)
             .await
             .unwrap();
@@ -738,7 +641,7 @@ mod tests {
         drop(first);
         let current = waiting.await.unwrap();
         assert_eq!(current.provider.id, "a");
-        assert_eq!(current.access_token, "new-access");
+        assert_eq!(current.api_key, "sk-new");
         let mut waiting = Box::pin(state.balancer.select(
             &state,
             Some("session"),
@@ -762,16 +665,20 @@ mod tests {
 
     #[tokio::test]
     async fn persistent_affinity_reuses_provider_and_cooldown_reallocates() {
-        let state = crate::test_state("http://token.invalid").await;
+        let state = crate::test_state("http://upstream.invalid").await;
         seed_test_owner(&state).await;
         let now = chrono::Utc::now().timestamp();
         for (id, created) in [("provider-a", now), ("provider-b", now + 1)] {
-            sqlx::query("INSERT INTO providers(id,name,account_id,access_token,refresh_token,status,owner_id,created_at,updated_at) VALUES(?,?,?,?,?,'active',?,?,?)")
-                .bind(id).bind(id).bind(format!("account-{id}"))
-                .bind("access")
-                .bind("refresh")
+            sqlx::query("INSERT INTO providers(id,name,api_key,status,owner_id,created_at,updated_at) VALUES(?,?,?,'active',?,?,?)")
+                .bind(id)
+                .bind(id)
+                .bind(format!("sk-{id}"))
                 .bind(TEST_OWNER)
-                .bind(created).bind(created).execute(&state.db).await.unwrap();
+                .bind(created)
+                .bind(created)
+                .execute(&state.db)
+                .await
+                .unwrap();
         }
         state.balancer.reload_providers(&state.db).await.unwrap();
         let first = state
@@ -804,25 +711,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rate_limit_circuit_is_persisted_and_closed_after_cooldown() {
-        let state = crate::test_state("http://token.invalid").await;
+    async fn rate_limit_cooldown_is_persisted_and_cleared_after_the_window() {
+        let state = crate::test_state("http://upstream.invalid").await;
         let now = chrono::Utc::now().timestamp();
-        sqlx::query("INSERT INTO providers(id,name,account_id,access_token,refresh_token,status,created_at,updated_at) VALUES('provider','provider','account','access','refresh','active',?,?)")
-            .bind(now)
-            .bind(now)
-            .execute(&state.db)
-            .await
-            .unwrap();
+        seed_test_owner(&state).await;
+        seed_provider(&state, "provider", "sk-provider", TEST_OWNER).await;
         state.balancer.reload_providers(&state.db).await.unwrap();
 
-        let reset = now + 30;
         let body = serde_json::to_vec(&json!({
             "error": {
-                "type": "usage_limit_reached",
-                "message": "The usage limit has been reached",
-                "plan_type": "pro",
-                "resets_at": reset,
-                "resets_in_seconds": 30,
+                "message": "You are sending requests too quickly.",
+                "type": "rate_limit_reached",
             }
         }))
         .unwrap();
@@ -838,20 +737,21 @@ mod tests {
             .await
             .unwrap();
 
-        let status: String = sqlx::query_scalar("SELECT status FROM providers WHERE id='provider'")
+        let (status, last_error, cooldown_until): (String, Option<String>, Option<i64>) =
+            sqlx::query_as(
+                "SELECT status,last_error,cooldown_until FROM providers WHERE id='provider'",
+            )
             .fetch_one(&state.db)
             .await
             .unwrap();
         assert_eq!(status, "cooldown");
-
-        let open: (String, String, i64, Option<i64>) = sqlx::query_as("SELECT cause,rate_limit_json,cooldown_until,closed_at FROM provider_circuit_events WHERE provider_id='provider'")
-            .fetch_one(&state.db)
-            .await
-            .unwrap();
-        assert_eq!(open.0, "usage_limit_reached");
-        assert!(open.1.contains("resets_at"));
-        assert_eq!(open.2, reset);
-        assert_eq!(open.3, None);
+        assert_eq!(last_error.as_deref(), Some("rate limit reached"));
+        let cooldown_until = cooldown_until.expect("a 429 opens a cooldown window");
+        assert!(
+            (now + RATE_LIMIT_COOLDOWN_SECONDS..=now + RATE_LIMIT_COOLDOWN_SECONDS + 1)
+                .contains(&cooldown_until),
+            "unexpected cooldown window: {cooldown_until}"
+        );
 
         sqlx::query("UPDATE providers SET cooldown_until=?,updated_at=? WHERE id='provider'")
             .bind(now - 1)
@@ -865,18 +765,55 @@ mod tests {
             .await
             .unwrap();
 
-        let closed: (String, Option<i64>, Option<String>) = sqlx::query_as("SELECT status,closed_at,resolution FROM providers LEFT JOIN provider_circuit_events ON provider_circuit_events.provider_id=providers.id WHERE providers.id='provider'")
+        let (status, cooldown_until, last_error): (String, Option<i64>, Option<String>) =
+            sqlx::query_as(
+                "SELECT status,cooldown_until,last_error FROM providers WHERE id='provider'",
+            )
             .fetch_one(&state.db)
             .await
             .unwrap();
-        assert_eq!(closed.0, "active");
-        assert!(closed.1.is_some());
-        assert_eq!(closed.2.as_deref(), Some("provider became active"));
+        assert_eq!(status, "active");
+        assert_eq!(cooldown_until, None);
+        assert_eq!(last_error, None);
+    }
+
+    #[tokio::test]
+    async fn insufficient_balance_marks_provider_balance_error() {
+        let state = crate::test_state("http://upstream.invalid").await;
+        seed_test_owner(&state).await;
+        seed_provider(&state, "provider", "sk-provider", TEST_OWNER).await;
+        state.balancer.reload_providers(&state.db).await.unwrap();
+
+        let body = serde_json::to_vec(&json!({
+            "error": { "message": "Insufficient Balance", "type": "insufficient_balance" }
+        }))
+        .unwrap();
+        track_response(&state, "provider", StatusCode::PAYMENT_REQUIRED, &body)
+            .await
+            .unwrap();
+        state
+            .balancer
+            .maintain(&state.db, &state.write_gate)
+            .await
+            .unwrap();
+
+        let status: String = sqlx::query_scalar("SELECT status FROM providers WHERE id='provider'")
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(status, "balance_error");
+        assert!(
+            state
+                .balancer
+                .select(&state, None, None, test_downstream())
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
     async fn private_providers_serve_only_the_owner_consumers() {
-        let state = crate::test_state("http://token.invalid").await;
+        let state = crate::test_state("http://upstream.invalid").await;
         let now = chrono::Utc::now().timestamp();
         for owner_id in ["owner-a", "owner-b"] {
             sqlx::query("INSERT INTO users(id,role,created_at) VALUES(?,'user',?)")
@@ -890,13 +827,22 @@ mod tests {
             ("provider-a", "owner-a", PROVIDER_VISIBILITY_PRIVATE),
             ("provider-b", "owner-b", PROVIDER_VISIBILITY_PUBLIC),
         ] {
-            sqlx::query("INSERT INTO providers(id,name,account_id,access_token,refresh_token,status,created_at,updated_at,owner_id,visibility) VALUES(?,?,?,?,?,'active',?,?,?,?)")
-                .bind(provider_id).bind(provider_id).bind(provider_id).bind("access").bind("refresh").bind(now).bind(now).bind(owner_id).bind(visibility).execute(&state.db).await.unwrap();
+            sqlx::query("INSERT INTO providers(id,name,api_key,status,created_at,updated_at,owner_id,visibility) VALUES(?,?,?,'active',?,?,?,?)")
+                .bind(provider_id)
+                .bind(provider_id)
+                .bind(format!("sk-{provider_id}"))
+                .bind(now)
+                .bind(now)
+                .bind(owner_id)
+                .bind(visibility)
+                .execute(&state.db)
+                .await
+                .unwrap();
         }
         state.balancer.reload_providers(&state.db).await.unwrap();
 
         async fn selected(state: &AppState, excluded: Option<&str>, owner_id: &str) -> String {
-            let downstream = Downstream::new(owner_id, CODEX_ORIGINATOR);
+            let downstream = Downstream::new(owner_id);
             state
                 .balancer
                 .select(state, None, excluded, downstream)
@@ -909,7 +855,7 @@ mod tests {
         assert_eq!(
             state
                 .balancer
-                .select_provider("provider-a", Downstream::new("owner-a", CODEX_ORIGINATOR))
+                .select_provider("provider-a", Downstream::new("owner-a"))
                 .await
                 .unwrap()
                 .provider
@@ -919,7 +865,7 @@ mod tests {
         assert!(
             state
                 .balancer
-                .select_provider("provider-a", Downstream::new("owner-b", CODEX_ORIGINATOR))
+                .select_provider("provider-a", Downstream::new("owner-b"))
                 .await
                 .is_err()
         );
@@ -938,9 +884,15 @@ mod tests {
         let balancer = Balancer::default();
         let now = chrono::Utc::now().timestamp();
         for id in ["deleted", "survivor"] {
-            sqlx::query("INSERT INTO providers(id,name,account_id,access_token,refresh_token,status,created_at,updated_at) VALUES(?,?,?,?,?,'active',?,?)")
-                .bind(id).bind(id).bind(id).bind("access").bind("refresh")
-                .bind(now).bind(now).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO providers(id,name,api_key,status,created_at,updated_at) VALUES(?,?,?,'active',?,?)")
+                .bind(id)
+                .bind(id)
+                .bind(format!("sk-{id}"))
+                .bind(now)
+                .bind(now)
+                .execute(&pool)
+                .await
+                .unwrap();
         }
         balancer.reload_providers(&pool).await.unwrap();
         balancer.remember_affinity("before-delete", "deleted", now, 3_600);
@@ -953,7 +905,6 @@ mod tests {
                 last_error: None,
                 last_used_at: Some(now),
                 updated_at: now,
-                circuit: None,
             },
         );
 
@@ -977,7 +928,6 @@ mod tests {
                     last_error: None,
                     last_used_at: Some(now),
                     updated_at: now,
-                    circuit: None,
                 },
             );
         }
@@ -1001,260 +951,5 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(survivor, ("cooldown".to_owned(), "committed".to_owned()));
-    }
-
-    async fn seed_routing_provider(state: &AppState, id: &str, originator: &str, allowed: bool) {
-        seed_test_owner(state).await;
-        sqlx::query("INSERT INTO providers(id,name,account_id,access_token,refresh_token,owner_id,originator,allow_other_originator,created_at,updated_at) VALUES(?,?,?,'access','refresh',?,?,?,0,0)")
-            .bind(id).bind(id).bind(id).bind(TEST_OWNER).bind(originator).bind(allowed)
-            .execute(&state.db).await.unwrap();
-        state.balancer.reload_providers(&state.db).await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn originator_exact_pool_beats_backup_affinity_load_and_queue() {
-        use futures_util::poll;
-        let state = crate::test_state("http://token.invalid").await;
-        seed_routing_provider(&state, "exact", CODEX_ORIGINATOR, false).await;
-        seed_routing_provider(&state, "backup", "pi", true).await;
-        state.balancer.set_concurrency_limit(1);
-        state.balancer.pin_affinity(&state, "session", "backup");
-        let first = state
-            .balancer
-            .select(
-                &state,
-                Some("session"),
-                None,
-                Downstream::new(TEST_OWNER, CODEX_ORIGINATOR),
-            )
-            .await
-            .unwrap();
-        assert_eq!(first.provider.id, "exact");
-        assert_eq!(first.originator_fallback_reason, None);
-        let mut waiting = Box::pin(state.balancer.select(
-            &state,
-            Some("session"),
-            None,
-            Downstream::new(TEST_OWNER, CODEX_ORIGINATOR),
-        ));
-        assert!(
-            poll!(&mut waiting).is_pending(),
-            "busy exact providers queue rather than spill to backup"
-        );
-        assert_eq!(state.balancer.inflight("backup"), 0);
-        drop(first);
-        let next = waiting.await.unwrap();
-        assert_eq!(next.provider.id, "exact");
-        drop(next);
-
-        sqlx::query("UPDATE providers SET manual_disabled=1 WHERE id='exact'")
-            .execute(&state.db)
-            .await
-            .unwrap();
-        state.balancer.reload_providers(&state.db).await.unwrap();
-        let backup = state
-            .balancer
-            .select(
-                &state,
-                Some("session"),
-                None,
-                Downstream::new(TEST_OWNER, CODEX_ORIGINATOR),
-            )
-            .await
-            .unwrap();
-        assert_eq!(backup.provider.id, "backup");
-        assert_eq!(
-            backup.originator_fallback_reason,
-            Some("provider_pool_empty")
-        );
-        drop(backup);
-        sqlx::query("UPDATE providers SET manual_disabled=0 WHERE id='exact'")
-            .execute(&state.db)
-            .await
-            .unwrap();
-        state.balancer.reload_providers(&state.db).await.unwrap();
-        let recovered = state
-            .balancer
-            .select(
-                &state,
-                Some("session"),
-                None,
-                Downstream::new(TEST_OWNER, CODEX_ORIGINATOR),
-            )
-            .await
-            .unwrap();
-        assert_eq!(
-            recovered.provider.id, "exact",
-            "recovery overrides a cached backup affinity"
-        );
-        let native = state
-            .balancer
-            .select(&state, None, None, Downstream::new(TEST_OWNER, "pi"))
-            .await
-            .unwrap();
-        assert_eq!(
-            native.originator_fallback_reason, None,
-            "an opted-in Pi provider remains an exact Pi provider"
-        );
-    }
-
-    #[tokio::test]
-    async fn originator_fallback_respects_availability_and_retry_exclusion() {
-        let state = crate::test_state("http://token.invalid").await;
-        seed_routing_provider(&state, "backup", "pi", true).await;
-        for (status, disabled, deleted) in [
-            ("auth_error", 0, 0),
-            ("cooldown", 0, 0),
-            ("active", 1, 0),
-            ("active", 0, 1),
-        ] {
-            sqlx::query("UPDATE providers SET status=?,manual_disabled=?,is_deleted=?,cooldown_until=? WHERE id='backup'")
-                .bind(status).bind(disabled).bind(deleted).bind(chrono::Utc::now().timestamp()+60)
-                .execute(&state.db).await.unwrap();
-            state.balancer.reload_providers(&state.db).await.unwrap();
-            for originator in [CODEX_ORIGINATOR, "pi", ""] {
-                assert!(
-                    state
-                        .balancer
-                        .select(&state, None, None, Downstream::new(TEST_OWNER, originator))
-                        .await
-                        .is_err()
-                );
-            }
-        }
-        sqlx::query(
-            "UPDATE providers SET status='active',manual_disabled=0,is_deleted=0 WHERE id='backup'",
-        )
-        .execute(&state.db)
-        .await
-        .unwrap();
-        state.balancer.reload_providers(&state.db).await.unwrap();
-        assert!(
-            state
-                .balancer
-                .select(
-                    &state,
-                    None,
-                    Some("backup"),
-                    Downstream::new(TEST_OWNER, CODEX_ORIGINATOR)
-                )
-                .await
-                .is_err()
-        );
-        let unknown = state
-            .balancer
-            .select(&state, None, None, Downstream::new(TEST_OWNER, ""))
-            .await
-            .unwrap();
-        assert_eq!(
-            unknown.originator_fallback_reason,
-            Some("downstream_client_unknown")
-        );
-    }
-
-    #[tokio::test]
-    async fn queued_originator_fallback_rechecks_permission_and_exact_pool_recovery() {
-        use futures_util::poll;
-        for recover in [false, true] {
-            let state = crate::test_state("http://token.invalid").await;
-            seed_routing_provider(&state, "backup", "pi", true).await;
-            state.balancer.set_concurrency_limit(1);
-            let holder = state
-                .balancer
-                .select(&state, None, None, Downstream::new(TEST_OWNER, "pi"))
-                .await
-                .unwrap();
-            let mut waiting = Box::pin(state.balancer.select(
-                &state,
-                None,
-                None,
-                Downstream::new(TEST_OWNER, CODEX_ORIGINATOR),
-            ));
-            assert!(poll!(&mut waiting).is_pending());
-            if recover {
-                seed_routing_provider(&state, "exact", CODEX_ORIGINATOR, false).await;
-            } else {
-                sqlx::query("UPDATE providers SET allow_other_originator=0 WHERE id='backup'")
-                    .execute(&state.db)
-                    .await
-                    .unwrap();
-                state.balancer.reload_providers(&state.db).await.unwrap();
-            }
-            drop(holder);
-            let result = waiting.await;
-            if recover {
-                assert_eq!(result.unwrap().provider.id, "exact");
-            } else {
-                assert!(result.is_err());
-            }
-            assert_eq!(state.balancer.load("backup"), ProviderLoad::default());
-        }
-    }
-
-    #[tokio::test]
-    async fn originator_backups_balance_only_within_the_selected_tier() {
-        let state = crate::test_state("http://token.invalid").await;
-        seed_routing_provider(&state, "a", "pi", true).await;
-        seed_routing_provider(&state, "b", "opencode", true).await;
-        let a = state
-            .balancer
-            .select(
-                &state,
-                None,
-                None,
-                Downstream::new(TEST_OWNER, CODEX_ORIGINATOR),
-            )
-            .await
-            .unwrap();
-        let b = state
-            .balancer
-            .select(
-                &state,
-                None,
-                None,
-                Downstream::new(TEST_OWNER, CODEX_ORIGINATOR),
-            )
-            .await
-            .unwrap();
-        assert_ne!(a.provider.id, b.provider.id);
-        assert!(a.originator_fallback_reason.is_some());
-        assert!(b.originator_fallback_reason.is_some());
-    }
-
-    #[tokio::test]
-    async fn pinned_realtime_provider_accepts_opted_in_fallback_without_rebalancing() {
-        let state = crate::test_state("http://token.invalid").await;
-        seed_routing_provider(&state, "exact", CODEX_ORIGINATOR, false).await;
-        seed_routing_provider(&state, "backup", "pi", true).await;
-        let pinned = state
-            .balancer
-            .select_provider("backup", Downstream::new(TEST_OWNER, CODEX_ORIGINATOR))
-            .await
-            .unwrap();
-        assert_eq!(pinned.provider.id, "backup");
-        assert_eq!(
-            pinned.originator_fallback_reason,
-            Some("provider_pool_empty")
-        );
-        drop(pinned);
-        sqlx::query("UPDATE providers SET allow_other_originator=0 WHERE id='backup'")
-            .execute(&state.db)
-            .await
-            .unwrap();
-        state.balancer.reload_providers(&state.db).await.unwrap();
-        assert!(
-            state
-                .balancer
-                .select_provider("backup", Downstream::new(TEST_OWNER, CODEX_ORIGINATOR))
-                .await
-                .is_err()
-        );
-        assert!(
-            state
-                .balancer
-                .select_provider("backup", Downstream::new(TEST_OWNER, "pi"))
-                .await
-                .is_ok()
-        );
     }
 }

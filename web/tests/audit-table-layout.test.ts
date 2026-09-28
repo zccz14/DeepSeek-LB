@@ -6,7 +6,7 @@ test("inference audit keeps its table columns aligned around user and consumer",
   const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8")
   const audit = app.slice(
     app.indexOf("function AuditPage"),
-    app.indexOf("function AuditDetailPage")
+    app.indexOf("function CopyableIdentifier")
   )
   const header = audit.slice(
     audit.indexOf("<TableHeader>"),
@@ -17,12 +17,11 @@ test("inference audit keeps its table columns aligned around user and consumer",
     "{t.consumer}",
     "{t.time}",
     "{t.model}",
-    "{t.downstreamUserAgent}",
     "{t.actualCost}",
     "{t.officialCost}",
     "{t.priceMultiplier}",
     "{t.provider}",
-    "{t.sessionId}",
+    "{t.threadId}",
     "{t.status}",
     "{t.usage}",
     "{t.actions}",
@@ -36,14 +35,8 @@ test("inference audit keeps its table columns aligned around user and consumer",
   for (const hiddenColumn of [
     "downstreamModel",
     "upstreamModel",
-    "officialConsumedUsdBefore",
-    "officialConsumedUsdAfter",
-    "actualConsumedUsdBefore",
-    "actualConsumedUsdAfter",
-    "officialProvidedUsdBefore",
-    "officialProvidedUsdAfter",
-    "actualProvidedUsdBefore",
-    "actualProvidedUsdAfter",
+    "sessionId",
+    "downstreamUserAgent",
   ]) {
     assert.doesNotMatch(header, new RegExp(`\\{t\\.${hiddenColumn}\\}`))
   }
@@ -59,8 +52,6 @@ test("inference audit keeps its table columns aligned around user and consumer",
     firstRow,
     /cacheHitRate\(\s*row\.cached_tokens,\s*row\.input_tokens,\s*locale\s*\)/
   )
-  assert.match(firstRow, /row\.upstream_model/)
-  assert.match(firstRow, /auditTurnStateMayIndicateDowngrade\(row\)/)
-  assert.match(firstRow, /bg-amber-500\/10/)
-  assert.match(firstRow, /text-destructive/)
+  assert.match(firstRow, /row\.peak \? t\.pricingPeak : t\.pricingOffPeak/)
+  assert.doesNotMatch(firstRow, /row\.upstream_model/)
 })

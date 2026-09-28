@@ -3,14 +3,6 @@ import { readFile } from "node:fs/promises"
 import test from "node:test"
 
 const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8")
-const modelDowngradeSankey = await readFile(
-  new URL("../src/components/model-downgrade-sankey.tsx", import.meta.url),
-  "utf8"
-)
-const modelDowngradeRateChart = await readFile(
-  new URL("../src/components/model-downgrade-rate-chart.tsx", import.meta.url),
-  "utf8"
-)
 
 test("places management audit on its administrator page and keeps inference audit focused", () => {
   const audit = app.slice(
@@ -39,46 +31,19 @@ test("places provider audit behind the administrator navigation and route", () =
   assert.match(app, /dataKey="input_tokens"/)
 })
 
-test("places the model downgrade audit behind the administrator navigation and route", () => {
-  const administration = app.slice(
-    app.indexOf("label: t.navigationAdministration"),
+test("exposes only the DeepSeek surface in the sidebar navigation", () => {
+  const navigation = app.slice(
+    app.indexOf("const navigationGroups"),
     app.indexOf("function toggleLocale")
   )
-
-  assert.match(administration, /\["model-downgrade-audit", WorkflowIcon\]/)
-  assert.match(
-    app,
-    /path="\/model-downgrade-audit"[\s\S]*<ModelDowngradeAuditPage/
+  assert.doesNotMatch(
+    navigation,
+    /transcriptions|realtime|images|model-downgrade-audit/
   )
-  assert.match(app, /function ModelDowngradeAuditPage\(/)
-  assert.match(app, /model-downgrade-audit\?period=/)
-  assert.match(app, /<ModelDowngradeSankey[\s\S]*links=\{sankey\.links\}/)
-  assert.match(
-    modelDowngradeSankey,
-    /<Sankey[\s\S]*data=\{\{ nodes, links \}\}/
-  )
-  assert.match(app, /<ModelDowngradeRateChart[\s\S]*points=\{ratePoints\}/)
-  assert.match(modelDowngradeRateChart, /dataKey="downgrade_rate"/)
-  assert.match(modelDowngradeRateChart, /domain=\{\[0, 1\]\}/)
-  assert.match(app, /modelDowngradeRateChart/)
-  assert.match(app, /modelDowngradeDowngradedRequests/)
-})
-
-test("places the experimental 312 turn-state filter in administrator settings", () => {
-  const settings = app.slice(
-    app.indexOf("function SettingsPage"),
-    app.indexOf("function MidasSettings")
-  )
-
-  assert.match(
-    settings,
-    /user\.role === "root" \|\| user\.role === "admin"[\s\S]*<ExperimentalTurnState312FilterSettings/
-  )
-  assert.match(
-    settings,
-    /\/api\/settings\/experimental-turn-state-312-filter/
-  )
-  assert.match(settings, /JSON\.stringify\(\{ enabled \}\)/)
+  assert.match(app, /\["codex-integration", PencilIcon\]/)
+  assert.match(app, /\["dsh-integration", KeyRoundIcon\]/)
+  assert.match(app, /\["opencode-integration", KeyRoundIcon\]/)
+  assert.match(app, /\["direct-api-integration", BookOpenIcon\]/)
 })
 
 test("keeps top-ups in the workspace navigation group", () => {
@@ -112,21 +77,18 @@ test("keeps consumer actions beside their identifying columns with rotation conf
   )
   assert.match(consumers, /event\.preventDefault\(\)\s*void confirmRotate\(\)/)
   assert.match(consumers, /<Trash2Icon data-icon="inline-start" \/>/)
+  assert.doesNotMatch(consumers, /intercept_degradation/)
 })
 
-test("shows the transcription model and token ratios in the account overview", () => {
+test("shows the billing window and token ratios in the account overview", () => {
   const dashboard = app.slice(
     app.indexOf("function Dashboard"),
     app.indexOf("function ModelPricesPage")
   )
-  const transcriptions = app.slice(
-    app.indexOf("function TranscriptionsPage"),
-    app.indexOf("type RealtimeSession")
-  )
 
-  assert.match(transcriptions, /t\.transcriptionModelId/)
-  assert.match(app, /transcriptionModelId: "gpt-4o-transcribe"/)
   assert.match(dashboard, /t\.accountOverview/)
+  assert.match(dashboard, /t\.pricingTariffTitle/)
+  assert.match(dashboard, /data\?\.peak_now \? t\.pricingPeak : t\.pricingOffPeak/)
   assert.match(dashboard, /t\.cacheRate[\s\S]*cacheHitRate\(/)
   assert.match(dashboard, /t\.inputOutputRatio[\s\S]*inputOutputRatio\(/)
   assert.doesNotMatch(dashboard, /<CardTitle>\{t\.operationalStatus\}/)

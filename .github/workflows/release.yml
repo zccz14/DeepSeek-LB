@@ -65,21 +65,21 @@ jobs:
         run: |
           bundle="$(sed -n 's/.*src="\(\/assets\/[^" ]*\.js\)".*/\1/p' web/dist/index.html)"
           test -n "$bundle"
-          strings target/release/openai-lb | grep -F "$bundle" >/dev/null
+          strings target/release/deepseek-lb | grep -F "$bundle" >/dev/null
       - name: Package binary
         run: |
           mkdir package
-          cp target/release/openai-lb package/
+          cp target/release/deepseek-lb package/
           cp README.md LICENSE package/
-          tar -C package -czf openai-lb-x86_64-unknown-linux-gnu.tar.gz .
-          shasum -a 256 openai-lb-x86_64-unknown-linux-gnu.tar.gz > openai-lb-x86_64-unknown-linux-gnu.tar.gz.sha256
+          tar -C package -czf deepseek-lb-x86_64-unknown-linux-gnu.tar.gz .
+          shasum -a 256 deepseek-lb-x86_64-unknown-linux-gnu.tar.gz > deepseek-lb-x86_64-unknown-linux-gnu.tar.gz.sha256
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           for attempt in 1 2 3 4 5; do
             set +e
-            output="$(gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber openai-lb-x86_64-unknown-linux-gnu.tar.gz* 2>&1)"
+            output="$(gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber deepseek-lb-x86_64-unknown-linux-gnu.tar.gz* 2>&1)"
             status=$?
             set -e
             printf '%s\n' "$output"

@@ -16,33 +16,34 @@ test("uses native numeric validation for the price multiplier", async () => {
   assert.doesNotMatch(input, /pattern=/)
 })
 
-test("renders platform capacity history with the shadcn chart component", async () => {
+test("sends only the DeepSeek runtime settings on save", async () => {
   const source = await readFile(appPath, "utf8")
-  const start = source.indexOf("function PlatformCapacityTrend")
-  const trend = source.slice(start, source.indexOf("function UsersPage", start))
+  const start = source.indexOf("function RuntimeSettings")
+  const runtime = source.slice(start, source.indexOf("function AdminAuditPage", start))
 
-  assert.match(source, /@\/components\/ui\/chart/)
-  assert.match(trend, /<ChartContainer/)
-  assert.match(trend, /<LineChart/)
-  assert.doesNotMatch(trend, /<svg/)
+  for (const field of [
+    "upstream_base",
+    "model_price_multiplier",
+    "allow_all_users_debt",
+    "response_body_limit",
+    "affinity_ttl_seconds",
+    "request_archive_retention_days",
+  ]) {
+    assert.match(runtime, new RegExp(field))
+  }
+  assert.doesNotMatch(runtime, /oauth_/)
+  assert.doesNotMatch(runtime, /image_body_limit/)
+  assert.doesNotMatch(runtime, /audio_body_limit/)
 })
 
-test("capacity trend exposes the sampled time and localized capacity in its tooltip", async () => {
+test("keeps the peak and off-peak price table in the model price page", async () => {
   const source = await readFile(appPath, "utf8")
-  const start = source.indexOf("function PlatformCapacityTrend")
-  const trend = source.slice(start, source.indexOf("function UsersPage", start))
+  const start = source.indexOf("function ModelPricesPage")
+  const page = source.slice(start, source.indexOf("function TopupsPage", start))
 
-  assert.match(source, /Tooltip as ChartTooltip/)
-  assert.match(trend, /<LineChart accessibilityLayer data=\{chartData\}>/)
-  assert.match(trend, /<ChartTooltip[\s\S]*?<\/LineChart>/)
-  assert.match(trend, /labelFormatter=\{\(value\) => formatTime\(Number\(value\), locale\)\}/)
-  assert.match(trend, /Number\(value\)\.toLocaleString\(locale, \{ maximumFractionDigits: 2 \}\)/)
-  assert.match(trend, /formatter=\{[\s\S]*?%`[\s\S]*?t\.platformPlusCapacity/)
-  assert.match(trend, /backgroundColor: "var\(--popover\)"/)
-  assert.match(trend, /itemStyle=\{\{ color: "var\(--popover-foreground\)" \}\}/)
-})
-
-test("capacity trend requests a seven-day history window", async () => {
-  const source = await readFile(new URL("../../src/api.rs", import.meta.url), "utf8")
-  assert.match(source, /PROVIDER_CAPACITY_HISTORY_WINDOW_SECONDS: i64 = 7 \* 24 \* 60 \* 60/)
+  assert.match(page, /price\.peak\.cache_hit_usd_nanos/)
+  assert.match(page, /price\.peak\.cache_miss_usd_nanos/)
+  assert.match(page, /price\.off_peak\.output_usd_nanos/)
+  assert.match(page, /\{t\.pricingPeak\}/)
+  assert.match(page, /\{t\.pricingOffPeak\}/)
 })
