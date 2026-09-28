@@ -1,0 +1,119 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in 1 2 3 4 5 6 7 8; do
+            if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              exit 0
+            fi
+
+            set +e
+            output="$(gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --generate-notes --title "$GITHUB_REF_NAME" 2>&1)"
+            status=$?
+            set -e
+            printf '%s\n' "$output"
+            if [ "$status" -ne 0 ] && ! printf '%s\n' "$output" | grep -Eq 'HTTP 5[0-9][0-9]:|Release\.tag_name already exists'; then
+              exit "$status"
+            fi
+            if [ "$attempt" -lt 8 ]; then
+              sleep 15
+            fi
+          done
+
+          sleep 15
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY"
+
+  build:
+    needs: create-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build frontend
+        working-directory: web
+        run: npm ci && npm run build
+      - uses: dtolnay/rust-toolchain@1.93.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release binary
+        run: cargo build --release --locked
+      - name: Verify embedded frontend bundle
+        run: |
+          bundle="$(sed -n 's/.*src="\(\/assets\/[^" ]*\.js\)".*/\1/p' web/dist/index.html)"
+          test -n "$bundle"
+          strings target/release/openai-lb | grep -F "$bundle" >/dev/null
+      - name: Package binary
+        run: |
+          mkdir package
+          cp target/release/openai-lb package/
+          cp README.md LICENSE package/
+          tar -C package -czf openai-lb-x86_64-unknown-linux-gnu.tar.gz .
+          shasum -a 256 openai-lb-x86_64-unknown-linux-gnu.tar.gz > openai-lb-x86_64-unknown-linux-gnu.tar.gz.sha256
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in 1 2 3 4 5; do
+            set +e
+            output="$(gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber openai-lb-x86_64-unknown-linux-gnu.tar.gz* 2>&1)"
+            status=$?
+            set -e
+            printf '%s\n' "$output"
+            if [ "$status" -eq 0 ]; then
+              exit 0
+            fi
+            if ! printf '%s\n' "$output" | grep -Eq 'HTTP 5[0-9][0-9]:|release not found'; then
+              exit "$status"
+            fi
+            if [ "$attempt" -lt 5 ]; then
+              sleep 15
+            fi
+          done
+
+          exit "$status"
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify deploy scripts
+        run: |
+          bash -n .github/scripts/send-deploy.sh deploy/deploy-release.sh .github/scripts/test-send-deploy.sh
+          .github/scripts/test-send-deploy.sh
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Deploy release through AWS Systems Manager
+        env:
+          EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .github/scripts/send-deploy.sh "$EC2_INSTANCE_ID" "$GITHUB_REF_NAME"
