@@ -15,7 +15,7 @@ product
 
 ## Product Purpose
 
-本产品是一个以 Rust 编写、以 SQLite 持久化、最终可作为单一 Binary 部署的 DeepSeek API 反向代理与负载均衡系统。用户用一条 DeepSeek API Key 注册一个上游提供商，root 与管理员可管理全局 Provider 池；系统只代理 DeepSeek 能力（OpenAI 兼容的对话补全、Responses API 与模型列表），不兼容其他 AI 厂商协议。
+本产品是一个以 Rust 编写、以 SQLite 持久化、最终可作为单一 Binary 部署的 DeepSeek API 反向代理与负载均衡系统。用户用一条 DeepSeek API Key 注册一个上游提供商，root 与管理员可管理全局 Provider 池；系统只代理 DeepSeek 接口（OpenAI 兼容的对话补全、Responses API 与模型列表），不兼容其他 AI 厂商协议。
 
 每个上游 Provider 有 `public` / `private` 可见性，默认 `private`：`private` Provider 只服务其拥有者名下的 Consumer，`public` 才进入全站共享上游池；拥有者可在 Provider 页面自行切换。
 
