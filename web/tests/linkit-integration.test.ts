@@ -12,10 +12,10 @@ test("console delegates Linkit identity UI to the published components", async (
   assert.equal(manifest.dependencies["linkit-react-components"], "0.4.0")
   assert.match(main, /import "linkit-react-components\/styles\.css"/)
   assert.match(app, /<LinkitProvider linkitBaseUrl="https:\/\/linkit\.ntnl\.io" lang=\{locale\}>/)
-  assert.match(
-    app,
-    /audiences=\{\[config\.auth_audience, "linkit\.ntnl\.io"\]\}/
-  )
+  assert.match(app, /audiences=\{authMiniAudiences\(config\.auth_audience\)\}/)
+  assert.match(app, /audiences=\{authMiniAudiences\(audience\.trim\(\)\)\}/)
+  assert.match(app, /function authMiniAudiences[\s\S]{0,160}?linkit\.ntnl\.io/)
+  assert.doesNotMatch(app, /audience=\{audience\.trim\(\)\}/)
   assert.match(app, /<LinkitMyInfo \/>/)
   assert.match(app, /<LinkitLanguageSync setLocale=\{changeLocale\} \/>/)
   assert.match(app, /<LinkitUserInfo/)

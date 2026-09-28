@@ -991,6 +991,8 @@ const copy = {
     setupIssuerHelp:
       "填写品牌提供的 Auth Mini HTTPS 地址。DeepSeek-LB 只连接该实例，不会部署或管理它。",
     setupAudience: "JWT audience",
+    setupAudienceHelp:
+      "本应用自身的 audience（通常为站点域名）；登录会同时申请 linkit.ntnl.io，供控制台的 Linkit 集成使用。",
     connectAuth: "连接 Auth Mini",
     setupLogin: "验证 root 身份",
     setupLoginHelp:
@@ -1511,6 +1513,8 @@ const copy = {
     setupIssuerHelp:
       "Enter the Auth Mini HTTPS URL supplied by the brand. DeepSeek-LB connects to it; it does not deploy or manage it.",
     setupAudience: "JWT audience",
+    setupAudienceHelp:
+      "This app's own audience (usually the site hostname). The login also requests linkit.ntnl.io for the console's Linkit integration.",
     connectAuth: "Connect Auth Mini",
     setupLogin: "Verify the root identity",
     setupLoginHelp:
@@ -1551,6 +1555,13 @@ const copy = {
     responseLimit: "Request & response body limit (bytes)",
   },
 } satisfies Record<Locale, Record<string, string>>
+
+// Auth Mini tokens must carry both this app's own audience and the Linkit
+// resource audience; a token without linkit.ntnl.io breaks the Linkit
+// identity components rendered inside the console.
+function authMiniAudiences(own: string): string[] {
+  return [own, "linkit.ntnl.io"]
+}
 
 function App() {
   const [locale, setLocale] = useState<Locale>(
@@ -1601,7 +1612,7 @@ function App() {
     <TooltipProvider>
       <AuthMiniProvider
         authMiniBaseUrl={config.auth_issuer}
-        audiences={[config.auth_audience, "linkit.ntnl.io"]}
+        audiences={authMiniAudiences(config.auth_audience)}
         autoRedirectToLogin
       >
         <LinkitProvider linkitBaseUrl="https://linkit.ntnl.io" lang={locale}>
@@ -1714,7 +1725,7 @@ function SetupForm({ locale }: { locale: Locale }) {
         {configuredIssuer ? (
           <AuthMiniProvider
             authMiniBaseUrl={configuredIssuer}
-            audience={audience.trim()}
+            audiences={authMiniAudiences(audience.trim())}
             autoRedirectToLogin={false}
           >
             <SetupIdentity
@@ -1765,6 +1776,7 @@ function SetupForm({ locale }: { locale: Locale }) {
                   placeholder={window.location.hostname}
                   required
                 />
+                <FieldDescription>{t.setupAudienceHelp}</FieldDescription>
               </Field>
               <Button type="submit" disabled={!issuer.trim()}>
                 {t.connectAuth}
