@@ -17,7 +17,8 @@ trap cleanup EXIT
 
 mkdir -p "$fixture_dir/.github/scripts" "$fixture_dir/deploy" "$mock_bin"
 cp "$repository_root/.github/scripts/send-deploy.sh" "$fixture_dir/.github/scripts/send-deploy.sh"
-grep -Fq -- 'rm -rf /opt/deepseek-lb/downloads' "$repository_root/deploy/deploy-release.sh"
+grep -Fq -- 'release_dir="/opt/deepseek-lb/releases/$tag"' "$repository_root/deploy/deploy-release.sh"
+grep -Fq -- 'health_url="http://127.0.0.1:8080/api/health"' "$repository_root/deploy/deploy-release.sh"
 
 cat > "$fixture_dir/deploy/deploy-release.sh" <<'EOF'
 #!/usr/bin/env bash
