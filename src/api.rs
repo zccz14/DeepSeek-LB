@@ -1258,7 +1258,7 @@ pub async fn audit_detail(
     let downstream_response_headers =
         visible_archive_headers(row.get::<Option<String>, _>(40), admin);
     let archive_available = row.get::<Option<String>, _>(22).is_some();
-    let bodies_available = archive_available && row.get::<i64, _>(52) == 0;
+    let bodies_available = archive_available && row.get::<i64, _>(53) == 0;
     let mut detail = json!({
         "id":row.get::<String,_>(0),
         "request_id":row.get::<String,_>(1),
@@ -1315,7 +1315,7 @@ pub async fn audit_detail(
         "next":navigation(next)
     });
     detail["error_code"] = row
-        .get::<Option<String>, _>(53)
+        .get::<Option<String>, _>(54)
         .map(Value::String)
         .unwrap_or(Value::Null);
     detail["archive_available"] = Value::Bool(archive_available);
@@ -2332,6 +2332,80 @@ mod tests {
             "the caller owns one provider"
         );
         assert_eq!(dashboard.0["available_model_ids"][0], "deepseek-flash");
+    }
+
+    #[tokio::test]
+    async fn audit_detail_decodes_archives_and_links_thread_neighbours() {
+        let state = crate::test_state("http://upstream.invalid").await;
+        seed_users(&state).await;
+        seed_consumer(&state, "consumer", "user", "sk-consumer").await;
+        seed_provider(&state, "provider", "user").await;
+        for (id, error_code, created_at) in [
+            ("first", None, 100_i64),
+            ("second", Some("server_error"), 200),
+        ] {
+            sqlx::query("INSERT INTO api_calls(id,request_id,thread_id,consumer_id,user_id,provider_id,method,path,model,peak,status,latency_ms,input_tokens,actual_cost_usd_nanos,actual_provided_usd_after_nanos,error_code,created_at) VALUES(?,?,'thread-1','consumer','user','provider','POST','/v1/chat/completions','deepseek-flash',0,200,10,5,3,7,?,?)")
+                .bind(id)
+                .bind(format!("req-{id}"))
+                .bind(error_code)
+                .bind(created_at)
+                .execute(&state.db)
+                .await
+                .unwrap();
+        }
+        sqlx::query("INSERT INTO request_archives(api_call_id,request_headers_json,upstream_request_headers_json,request_body,request_body_truncated,response_headers_json,downstream_response_headers_json,response_body,response_body_truncated,bodies_deleted,created_at) VALUES('second','[]','[]',X'7B7D',0,'[]',NULL,X'5B5D',0,0,150)")
+            .execute(&state.db)
+            .await
+            .unwrap();
+
+        let detail = audit_detail(
+            State(state.clone()),
+            Extension(user_identity()),
+            Path("second".to_owned()),
+        )
+        .await
+        .unwrap();
+        let value = detail.0;
+        assert_eq!(value["error_code"], "server_error");
+        assert_eq!(value["error"], json!(null));
+        assert_eq!(value["archive_available"], json!(true));
+        assert_eq!(
+            value["bodies_available"],
+            json!(true),
+            "provided-value columns must not be mistaken for bodies_deleted"
+        );
+        assert_eq!(value["request_body"], "{}");
+        assert_eq!(value["actual_provided_usd_after_nanos"], json!(7));
+        assert_eq!(value["previous"]["id"], "first");
+        assert_eq!(value["previous"]["request_id"], "req-first");
+        assert_eq!(value["next"], json!(null));
+
+        let first = audit_detail(
+            State(state.clone()),
+            Extension(user_identity()),
+            Path("first".to_owned()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(first.0["error_code"], json!(null));
+        assert_eq!(first.0["archive_available"], json!(false));
+        assert_eq!(first.0["bodies_available"], json!(false));
+        assert_eq!(first.0["previous"], json!(null));
+        assert_eq!(first.0["next"]["id"], "second");
+
+        sqlx::query("UPDATE request_archives SET bodies_deleted=1 WHERE api_call_id='second'")
+            .execute(&state.db)
+            .await
+            .unwrap();
+        let deleted = audit_detail(
+            State(state.clone()),
+            Extension(user_identity()),
+            Path("second".to_owned()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(deleted.0["archive_available"], json!(true));
+        assert_eq!(deleted.0["bodies_available"], json!(false));
     }
 
     #[tokio::test]

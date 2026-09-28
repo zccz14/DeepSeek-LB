@@ -50,7 +50,17 @@ async function requestJson<T>(
 
   let response = await request(false)
   if (response.status === 401 && sdk.session.getState().refreshToken) response = await request(true)
-  const payload = (await response.json()) as T | ApiError
+  const body = await response.text()
+  let payload: T | ApiError
+  try {
+    payload = JSON.parse(body) as T | ApiError
+  } catch {
+    throw new Error(
+      response.ok
+        ? `Response was not JSON (HTTP ${response.status})`
+        : `Request failed (${response.status})`
+    )
+  }
   if (!response.ok) {
     const error = "error" in (payload as object) ? (payload as ApiError).error : undefined
     const requestError = new Error(error?.message || `Request failed (${response.status})`) as Error & {
