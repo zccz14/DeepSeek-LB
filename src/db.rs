@@ -136,6 +136,12 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(models, r#"["deepseek-flash","deepseek-v4-pro"]"#);
+        let body_limit: String =
+            sqlx::query_scalar("SELECT value FROM app_meta WHERE key='response_body_limit'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(body_limit, "50331648");
         // A provider is one API key and nothing else.
         let columns: Vec<String> = sqlx::query("SELECT name FROM pragma_table_info('providers')")
             .fetch_all(&pool)

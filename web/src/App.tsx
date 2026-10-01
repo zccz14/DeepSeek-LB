@@ -7241,7 +7241,7 @@ function RuntimeSettings({
                   id="settings-response-limit"
                   type="number"
                   min={1024}
-                  max={16777216}
+                  max={50331648}
                   value={settings.response_body_limit}
                   onChange={(event) =>
                     update("response_body_limit", event.target.valueAsNumber)
