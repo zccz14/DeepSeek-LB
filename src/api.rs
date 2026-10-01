@@ -2353,7 +2353,7 @@ mod tests {
                 .await
                 .unwrap();
         }
-        sqlx::query("INSERT INTO request_archives(api_call_id,request_headers_json,upstream_request_headers_json,request_body,request_body_truncated,response_headers_json,downstream_response_headers_json,response_body,response_body_truncated,bodies_deleted,created_at) VALUES('second','[]','[]',X'7B7D',0,'[]',NULL,X'5B5D',0,0,150)")
+        sqlx::query("INSERT INTO request_archives(api_call_id,request_headers_json,upstream_request_headers_json,request_body,request_body_truncated,response_headers_json,downstream_response_headers_json,response_body,response_body_truncated,bodies_deleted,created_at) VALUES('second','[]','[]',X'7B7D',0,'[]',NULL,X'5B5D',0,0,unixepoch())")
             .execute(&state.db)
             .await
             .unwrap();
