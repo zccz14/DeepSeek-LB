@@ -1651,7 +1651,7 @@ pub async fn update_settings(
     let upstream_base = validate_http_url("upstream base", &input.upstream_base)?;
     let model_price_multiplier_nanos =
         payments::parse_model_price_multiplier_nanos(&input.model_price_multiplier)?;
-    if !(1_024..=16 * 1_024 * 1_024).contains(&input.response_body_limit)
+    if !(1_024..=48 * 1_024 * 1_024).contains(&input.response_body_limit)
         || !(60..=2_592_000).contains(&input.affinity_ttl_seconds)
         || !(1..=365).contains(&input.request_archive_retention_days)
     {
@@ -2267,6 +2267,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn settings_body_limit_is_capped_at_48_mib() {
+        let state = crate::test_state("http://upstream.invalid").await;
+        seed_users(&state).await;
+
+        let settings = |response_body_limit| UpdateSettings {
+            upstream_base: "https://api.deepseek.com".to_owned(),
+            allow_all_users_debt: false,
+            response_body_limit,
+            affinity_ttl_seconds: 7_200,
+            request_archive_retention_days: 3,
+            model_price_multiplier: "1.0".to_owned(),
+        };
+
+        let _ = update_settings(
+            State(state.clone()),
+            peer(),
+            Extension(root_identity()),
+            Json(settings(48 * 1_024 * 1_024)),
+        )
+        .await
+        .expect("48 MiB is the largest allowed body limit");
+        assert_eq!(state.config.load().response_body_limit, 48 * 1_024 * 1_024);
+
+        assert!(
+            update_settings(
+                State(state.clone()),
+                peer(),
+                Extension(root_identity()),
+                Json(settings(48 * 1_024 * 1_024 + 1)),
+            )
+            .await
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
     async fn audit_rows_expose_peak_pricing_and_filters() {
         let state = crate::test_state("http://upstream.invalid").await;
         seed_users(&state).await;
@@ -2353,7 +2389,7 @@ mod tests {
                 .await
                 .unwrap();
         }
-        sqlx::query("INSERT INTO request_archives(api_call_id,request_headers_json,upstream_request_headers_json,request_body,request_body_truncated,response_headers_json,downstream_response_headers_json,response_body,response_body_truncated,bodies_deleted,created_at) VALUES('second','[]','[]',X'7B7D',0,'[]',NULL,X'5B5D',0,0,150)")
+        sqlx::query("INSERT INTO request_archives(api_call_id,request_headers_json,upstream_request_headers_json,request_body,request_body_truncated,response_headers_json,downstream_response_headers_json,response_body,response_body_truncated,bodies_deleted,created_at) VALUES('second','[]','[]',X'7B7D',0,'[]',NULL,X'5B5D',0,0,unixepoch())")
             .execute(&state.db)
             .await
             .unwrap();
