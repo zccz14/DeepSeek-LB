@@ -10,7 +10,7 @@ DeepSeek-LB 是 DeepSeek API 的反向代理与负载均衡器。它以单个 Ru
 - 每个 Provider 有 `public` / `private` 可见性，默认 `private`：`private` 只服务拥有者名下的 Consumer，`public` 进入全站共享池。
 - Consumer 是下游 AI App 使用的凭据（`sk-*`，只在创建或轮换时展示一次）。
 - 逐调用审计：模型、Provider、Token 用量、缓存命中、峰谷时段、费用、首字节与总延迟、错误码，以及可选的请求/响应诊断正文。
-- 请求费用查询：下游记录响应头 `x-deepseek-lb-request-id` 后，可按单条或批量查询每次调用的实收金额与用量；跨上游的定价差异由各负载均衡器内部处理。
+- 请求费用查询：下游记录响应头 `x-deepseek-lb-request-id` 后，可按单条或批量查询每次调用的实收金额与用量；支持上游网关（NormAI）通过 `x-normai-request-id` 传入统一请求 ID，跨上游的定价差异由各负载均衡器内部处理。
 - 费用核算使用 DeepSeek 官方美元价格，区分高峰（peak）与非高峰（off-peak）两档；中国法定节假日全天按非高峰计费。
 - Midas 预付费：用户向 fund 账户充值后即可调用；未充值且未开启欠费的请求返回 HTTP 402。
 - Auth Mini 统一登录（Ed25519 JWT / JWKS），首个登录用户绑定为 root。
@@ -86,7 +86,7 @@ curl https://deepseek.ntnl.io/v1/requests/query \
   -d '{"ids":["<REQUEST_ID_1>","<REQUEST_ID_2>"]}'
 ```
 
-金额为实收费用（USD 纳美元，1e-9 USD），恒等于审计账目；查询以 request-id 为凭据，任意有效 Consumer 均可调用，更适合下游异步批量回填。字段、重试与回填示例见 [docs/request-cost-query.md](./docs/request-cost-query.md)。
+金额为实收费用（USD 纳美元，1e-9 USD），恒等于审计账目；查询以 request-id 为凭据，任意有效 Consumer 均可调用，更适合下游异步批量回填。若调用方（如 NormAI）通过请求头 `x-normai-request-id` 提供统一请求 ID，本服务会优先采用它——响应头、费用查询与控制台“请求 ID”三处同值；缺失或非法时生成本服务自己的 UUID。字段、重试与回填示例见 [docs/request-cost-query.md](./docs/request-cost-query.md)。
 
 ### 亲和与线程
 
@@ -133,7 +133,7 @@ Pull Request 工作流还会运行 RustSec 依赖审计。
 - 入站 `Authorization`、Cookie 与 hop-by-hop headers 不会转发到上游；上游始终使用所选 Provider 的 API Key。
 - 请求/响应诊断记录会保存最多 2 MiB 的正文预览；SQLite 文件因此可能包含 prompt 或输出片段，应按敏感业务数据保护并使用较短保留期。
 - 诊断记录不会保存 Authorization、Cookie、Token、Secret 或 Consumer 类请求头。
-- 费用查询以 request-id 为凭据：持有该 ID 的任意有效 Consumer 均可读取对应记录的金额与用量（ID 为 UUID，不可枚举）；控制台审计仍按租户隔离。
+- 费用查询以 request-id 为凭据：持有该 ID 的任意有效 Consumer 均可读取对应记录的金额与用量（ID 由本服务生成或上游网关提供，请视为凭据保管）；入站 `x-normai-request-id` 只作为请求标识采用，不参与权限判断；控制台审计仍按租户隔离。
 - SQLite 文件应位于本机磁盘；不要让多个实例通过网络文件系统同时写入同一数据库。
 - 生产部署应在 DeepSeek-LB 前提供 TLS，并限制数据目录的系统账户访问权限。
 
