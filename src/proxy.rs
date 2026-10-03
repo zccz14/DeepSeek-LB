@@ -149,7 +149,10 @@ impl UpstreamResponse {
 
 #[derive(Clone, Debug)]
 pub(crate) struct AuditTransportId {
+    /// `api_calls.id`, used internally for transport accounting.
     pub id: String,
+    /// `api_calls.request_id`, echoed as `x-deepseek-lb-request-id`.
+    pub request_id: String,
     pub diagnostics_enabled: bool,
 }
 
@@ -398,6 +401,7 @@ impl AuditTracker {
         );
         let transport = AuditTransportId {
             id: event.id.clone(),
+            request_id: event.request_id.clone(),
             diagnostics_enabled: event.request_archive,
         };
         self.permit
@@ -478,7 +482,7 @@ pub async fn handle_json(
 ) -> Result<Response, AppError> {
     let identity = api_identity(&state, &headers).await?;
     let audit = RequestAuditContext {
-        request_id: Uuid::new_v4().to_string(),
+        request_id: unified_request_id(&headers),
         thread_id: thread_id(&headers),
         method,
         client_ip: peer.ip().to_string(),
@@ -510,11 +514,11 @@ pub(crate) const REQUEST_QUERY_BODY_LIMIT: usize = 256 * 1024;
 
 /// Column set shared by both query shapes; the response field names are fixed
 /// by [`request_record_json`].
-const REQUEST_RECORD_SELECT: &str = "SELECT id,status,model,input_tokens,output_tokens,cached_tokens,actual_cost_usd_nanos,created_at FROM api_calls";
+const REQUEST_RECORD_SELECT: &str = "SELECT request_id,status,model,input_tokens,output_tokens,cached_tokens,actual_cost_usd_nanos,created_at FROM api_calls";
 
 fn request_record_json(row: &sqlx::sqlite::SqliteRow) -> Value {
     json!({
-        "request_id": row.get::<String, _>("id"),
+        "request_id": row.get::<String, _>("request_id"),
         "status": row.get::<i64, _>("status"),
         "model": row.get::<Option<String>, _>("model"),
         "input_tokens": row.get::<i64, _>("input_tokens"),
@@ -530,7 +534,7 @@ async fn load_request_records(
     ids: &[&str],
 ) -> Result<HashMap<String, Value>, AppError> {
     let mut query = QueryBuilder::<Sqlite>::new(REQUEST_RECORD_SELECT);
-    query.push(" WHERE id IN (");
+    query.push(" WHERE request_id IN (");
     {
         let mut separated = query.separated(",");
         for id in ids {
@@ -538,11 +542,18 @@ async fn load_request_records(
         }
         separated.push_unseparated(")");
     }
+    // Duplicate rows for one request ID are rare (a transport-level re-send
+    // after a dropped connection); the newest row wins.
+    query.push(" ORDER BY created_at DESC, id DESC");
     let rows = query.build().fetch_all(&state.db).await?;
-    Ok(rows
-        .into_iter()
-        .map(|row| (row.get::<String, _>("id"), request_record_json(&row)))
-        .collect())
+    let mut records = HashMap::new();
+    for row in rows {
+        let request_id = row.get::<String, _>("request_id");
+        records
+            .entry(request_id)
+            .or_insert_with(|| request_record_json(&row));
+    }
+    Ok(records)
 }
 
 async fn wait_for_request_record(state: &AppState, id: &str) -> Result<Option<Value>, AppError> {
@@ -1019,6 +1030,7 @@ async fn relay_response(
     }
     let audit_id = audit.event.as_ref().map(|event| AuditTransportId {
         id: event.id.clone(),
+        request_id: event.request_id.clone(),
         diagnostics_enabled: event.request_archive,
     });
     let completion = audit.take_stream(status, context.model.as_deref());
@@ -1251,6 +1263,25 @@ fn thread_id(headers: &HeaderMap) -> Option<String> {
                 .filter(|value| !value.is_empty())
                 .map(str::to_owned)
         })
+}
+
+/// Request IDs assigned by an upstream gateway (NormAI) keep one identifier
+/// across the whole chain: the value is stored as the audit `request_id`, is
+/// echoed as `x-deepseek-lb-request-id`, and is the key of the cost query
+/// API. Invalid or missing values fall back to a fresh UUID.
+const GATEWAY_REQUEST_ID_HEADER: &str = "x-normai-request-id";
+
+fn unified_request_id(headers: &HeaderMap) -> String {
+    headers
+        .get(GATEWAY_REQUEST_ID_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .filter(|id| is_valid_request_id(id))
+        .map(str::to_owned)
+        .unwrap_or_else(|| Uuid::new_v4().to_string())
+}
+
+fn is_valid_request_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 128 && id.bytes().all(|byte| byte.is_ascii_graphic())
 }
 
 const SSE_EVENT_LIMIT: usize = 8 * 1024 * 1024;
@@ -1647,7 +1678,7 @@ mod tests {
 
         let audits = wait_for_audits(&state, 1).await;
         let audit = &audits[0];
-        assert_eq!(audit.get::<String, _>("id"), request_id);
+        assert_eq!(audit.get::<String, _>("request_id"), request_id);
         assert_eq!(audit.get::<String, _>("path"), "/v1/responses");
         assert_eq!(audit.get::<String, _>("model"), "deepseek-v4-pro");
         assert_eq!(audit.get::<i64, _>("input_tokens"), 7);
@@ -1722,7 +1753,7 @@ mod tests {
 
         let audits = wait_for_audits(&state, 1).await;
         let audit = &audits[0];
-        assert_eq!(audit.get::<String, _>("id"), request_id);
+        assert_eq!(audit.get::<String, _>("request_id"), request_id);
 
         // A different consumer credential can read the record: lookups are
         // addressed by request ID only.
@@ -1769,7 +1800,7 @@ mod tests {
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(150)).await;
             sqlx::query(
-                "INSERT INTO api_calls(id,request_id,consumer_id,user_id,method,path,model,status,latency_ms,input_tokens,output_tokens,cached_tokens,actual_cost_usd_nanos,error,created_at) VALUES('late-record','request-late','consumer','user','POST','/v1/chat/completions','deepseek-flash',499,10,0,0,0,7,'client_cancelled',unixepoch())",
+                "INSERT INTO api_calls(id,request_id,consumer_id,user_id,method,path,model,status,latency_ms,input_tokens,output_tokens,cached_tokens,actual_cost_usd_nanos,error,created_at) VALUES('late-row','late-record','consumer','user','POST','/v1/chat/completions','deepseek-flash',499,10,0,0,0,7,'client_cancelled',unixepoch())",
             )
             .execute(&db)
             .await
@@ -1876,6 +1907,151 @@ mod tests {
             serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
                 .unwrap();
         assert_eq!(body["error"]["reason"].as_str(), Some("request_not_found"));
+    }
+
+    #[tokio::test]
+    async fn gateway_request_ids_flow_through_the_response_and_the_queries() {
+        let (upstream, _) = spawn_mock().await;
+        let state = crate::test_state(&upstream).await;
+        seed_consumer(&state, payments::USD_NANOS).await;
+        seed_provider(&state, "provider-1", "sk-provider-ok").await;
+
+        let mut request = proxy_request(
+            "/v1/chat/completions",
+            json!({"model":"deepseek-flash","messages":[{"role":"user","content":"ping"}]}),
+        );
+        request.headers_mut().insert(
+            "x-normai-request-id",
+            axum::http::HeaderValue::from_static("norm-7f3a9c1e"),
+        );
+        let response = crate::router(state.clone()).oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get("x-deepseek-lb-request-id")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "norm-7f3a9c1e"
+        );
+        response.into_body().collect().await.unwrap();
+
+        let audits = wait_for_audits(&state, 1).await;
+        assert_eq!(audits[0].get::<String, _>("request_id"), "norm-7f3a9c1e");
+
+        let response = fetch_record(&state, "/v1/requests/norm-7f3a9c1e", CONSUMER_SECRET).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let record: Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(record["request_id"].as_str(), Some("norm-7f3a9c1e"));
+        assert_eq!(
+            record["cost_usd_nanos"].as_i64(),
+            Some(audits[0].get::<i64, _>("actual_cost_usd_nanos"))
+        );
+
+        let response = request_query(
+            &state,
+            "/v1/requests/query",
+            json!({"ids":["norm-7f3a9c1e"]}),
+        )
+        .await;
+        let body: Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(
+            body["requests"][0]["request_id"].as_str(),
+            Some("norm-7f3a9c1e")
+        );
+        assert_eq!(body["missing"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn invalid_gateway_request_ids_fall_back_to_generated_ids() {
+        let (upstream, _) = spawn_mock().await;
+        let state = crate::test_state(&upstream).await;
+        seed_consumer(&state, payments::USD_NANOS).await;
+        seed_provider(&state, "provider-1", "sk-provider-ok").await;
+
+        // A value containing a space is not a valid request ID; the service
+        // must not adopt it.
+        let mut request = proxy_request(
+            "/v1/chat/completions",
+            json!({"model":"deepseek-flash","messages":[{"role":"user","content":"ping"}]}),
+        );
+        request.headers_mut().insert(
+            "x-normai-request-id",
+            axum::http::HeaderValue::from_static("not a valid id"),
+        );
+        let response = crate::router(state.clone()).oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let header = response
+            .headers()
+            .get("x-deepseek-lb-request-id")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert_ne!(header, "not a valid id");
+        response.into_body().collect().await.unwrap();
+        let audits = wait_for_audits(&state, 1).await;
+        assert_eq!(audits[0].get::<String, _>("request_id"), header);
+
+        // A request without the header takes the same fallback path.
+        let response = crate::router(state.clone())
+            .oneshot(proxy_request(
+                "/v1/chat/completions",
+                json!({"model":"deepseek-flash","messages":[{"role":"user","content":"ping"}]}),
+            ))
+            .await
+            .unwrap();
+        let header = response
+            .headers()
+            .get("x-deepseek-lb-request-id")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert!(Uuid::parse_str(&header).is_ok(), "fallback generates UUIDs");
+        response.into_body().collect().await.unwrap();
+        let audits = wait_for_audits(&state, 2).await;
+        assert!(
+            audits
+                .iter()
+                .any(|row| row.get::<String, _>("request_id") == header)
+        );
+    }
+
+    #[tokio::test]
+    async fn duplicate_request_ids_resolve_to_the_latest_record() {
+        let state = crate::test_state("http://upstream.invalid").await;
+        seed_consumer(&state, payments::USD_NANOS).await;
+        for (row_id, created_at, cost) in [("dup-first", 100, 0), ("dup-second", 200, 9)] {
+            sqlx::query(
+                "INSERT INTO api_calls(id,request_id,consumer_id,user_id,method,path,status,latency_ms,actual_cost_usd_nanos,created_at) VALUES(?, 'dup-id','consumer','user','POST','/v1/chat/completions',200,1,?,?)",
+            )
+            .bind(row_id)
+            .bind(cost)
+            .bind(created_at)
+            .execute(&state.db)
+            .await
+            .unwrap();
+        }
+
+        let response = fetch_record(&state, "/v1/requests/dup-id", CONSUMER_SECRET).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let record: Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(record["cost_usd_nanos"].as_i64(), Some(9));
+
+        let response = request_query(&state, "/v1/requests/query", json!({"ids":["dup-id"]})).await;
+        let body: Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(body["requests"][0]["cost_usd_nanos"].as_i64(), Some(9));
+        assert_eq!(body["missing"], json!([]));
     }
 
     #[tokio::test]

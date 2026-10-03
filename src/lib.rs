@@ -231,7 +231,8 @@ async fn record_response_transport(
     let mut parts = parts;
     parts.headers.insert(
         "x-deepseek-lb-request-id",
-        axum::http::HeaderValue::from_str(&id.id).expect("audit IDs are valid header values"),
+        axum::http::HeaderValue::from_str(&id.request_id)
+            .expect("request IDs are valid header values"),
     );
     let encoding = parts
         .headers

@@ -2,16 +2,29 @@
 
 Downstream services can look up the billed amount of one inference request, or
 of a batch of them, after the fact. The query key is the
-`x-deepseek-lb-request-id` response header that every inference response
-carries, so a caller records that header while proxying or consuming responses
-and resolves costs later — including requests it cancelled, lost, or never
-finished reading.
+unified request ID (see below), so a caller records the ID while proxying or
+consuming responses and resolves costs later — including requests it
+cancelled, lost, or never finished reading.
 
 Pricing stays inside each load balancer (peak/off-peak windows, price
 multipliers, model tables); clients consume final amounts only, and never need
 to model per-upstream pricing rules. Other load balancers in this ecosystem
 (OpenAI-LB) are expected to expose the same contract, so one client
 implementation covers every upstream.
+
+## Unified request IDs
+
+When the caller supplies `x-normai-request-id` on the inference request
+(NormAI does this when it proxies), the load balancer adopts the value as the
+request's ID: the `x-deepseek-lb-request-id` response header, this query API,
+and the console audit all use the same value, so one identifier covers the
+whole chain. Invalid values (empty, longer than 128 bytes, or containing
+non-ASCII-graphic bytes) are ignored and a UUID is generated instead —
+misconfigured callers never fail inference. The header is consumed by the load
+balancer and is never forwarded to the model provider.
+
+Duplicate records for one ID are possible in rare cases (a transport-level
+re-send after a dropped connection); queries return the most recent record.
 
 ## Single record
 
@@ -72,8 +85,8 @@ sk-*`). Records are addressed by request ID alone — the querying credential is
 not matched against the request's consumer — so a platform that aggregates
 requests across several credentials can use any one of them. Treat the request
 ID as the capability: whoever holds it can read that record's amount and usage
-metadata. IDs are random UUIDs and cannot be enumerated; the console audit
-remains scoped per tenant.
+metadata. Generated IDs are random UUIDs; IDs supplied by a gateway are
+capability values too. The console audit remains scoped per tenant.
 
 ## Backfill loop
 
@@ -94,7 +107,7 @@ loop, every N minutes or once pending is large enough:
 
 | field | meaning |
 | --- | --- |
-| `request_id` | the `x-deepseek-lb-request-id` header value of the original call |
+| `request_id` | the unified request ID: the `x-normai-request-id` request header value when supplied, otherwise a generated UUID; it is echoed as `x-deepseek-lb-request-id` |
 | `status` | recorded HTTP status (499 is a client-cancelled stream) |
 | `model` | requested model; `null` when the request failed before parsing |
 | `input_tokens`, `output_tokens`, `cached_tokens` | billed token usage |
