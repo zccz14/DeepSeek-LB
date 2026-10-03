@@ -178,7 +178,19 @@ pub fn router(state: AppState) -> Router {
             post(proxy::handle_json).layer(RequestBodyLimitLayer::new(response_limit)),
         )
         .route("/v1/models", get(proxy::handle_models))
-        .route("/models", get(proxy::handle_models));
+        .route("/models", get(proxy::handle_models))
+        .route(
+            "/v1/requests/query",
+            post(proxy::handle_requests_query)
+                .layer(RequestBodyLimitLayer::new(proxy::REQUEST_QUERY_BODY_LIMIT)),
+        )
+        .route(
+            "/requests/query",
+            post(proxy::handle_requests_query)
+                .layer(RequestBodyLimitLayer::new(proxy::REQUEST_QUERY_BODY_LIMIT)),
+        )
+        .route("/v1/requests/{id}", get(proxy::handle_request_record))
+        .route("/requests/{id}", get(proxy::handle_request_record));
 
     Router::new()
         .route("/api/health", get(api::health))
@@ -374,6 +386,14 @@ impl AppError {
             status: StatusCode::NOT_FOUND,
             message: message.into(),
             reason: None,
+            audit_transport: None,
+        }
+    }
+    pub fn not_found_with_reason(message: impl Into<String>, reason: &'static str) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            message: message.into(),
+            reason: Some(reason),
             audit_transport: None,
         }
     }

@@ -1,13 +1,20 @@
-use std::{convert::Infallible, net::SocketAddr, time::Instant};
+use std::{
+    collections::{HashMap, HashSet},
+    convert::Infallible,
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
 
 use axum::{
+    Json,
     body::{Body, Bytes},
-    extract::{ConnectInfo, OriginalUri, State},
+    extract::{ConnectInfo, OriginalUri, Path, State},
     http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version, header},
     response::Response,
 };
 use futures_util::StreamExt;
 use serde_json::{Value, json};
+use sqlx::{QueryBuilder, Row, Sqlite};
 use tokio::sync::OwnedSemaphorePermit;
 use uuid::Uuid;
 
@@ -486,6 +493,126 @@ pub async fn handle_models(
     api_identity(&state, &headers).await?;
     let config = state.config.load();
     models_response(&config.available_model_ids)
+}
+
+/// How long a single-record query waits for a just-finished request to settle
+/// and persist before reporting the record as missing.
+const REQUEST_RECORD_WAIT: Duration = Duration::from_secs(2);
+
+/// Poll interval while waiting for a settlement row to appear.
+const REQUEST_RECORD_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Maximum request IDs accepted by one batch query.
+const REQUEST_QUERY_MAX_IDS: usize = 1000;
+
+/// Request body cap for batch queries; 1000 UUIDs fit in about 40 KiB.
+pub(crate) const REQUEST_QUERY_BODY_LIMIT: usize = 256 * 1024;
+
+/// Column set shared by both query shapes; the response field names are fixed
+/// by [`request_record_json`].
+const REQUEST_RECORD_SELECT: &str = "SELECT id,status,model,input_tokens,output_tokens,cached_tokens,actual_cost_usd_nanos,created_at FROM api_calls";
+
+fn request_record_json(row: &sqlx::sqlite::SqliteRow) -> Value {
+    json!({
+        "request_id": row.get::<String, _>("id"),
+        "status": row.get::<i64, _>("status"),
+        "model": row.get::<Option<String>, _>("model"),
+        "input_tokens": row.get::<i64, _>("input_tokens"),
+        "output_tokens": row.get::<i64, _>("output_tokens"),
+        "cached_tokens": row.get::<i64, _>("cached_tokens"),
+        "cost_usd_nanos": row.get::<i64, _>("actual_cost_usd_nanos"),
+        "created_at": row.get::<i64, _>("created_at"),
+    })
+}
+
+async fn load_request_records(
+    state: &AppState,
+    ids: &[&str],
+) -> Result<HashMap<String, Value>, AppError> {
+    let mut query = QueryBuilder::<Sqlite>::new(REQUEST_RECORD_SELECT);
+    query.push(" WHERE id IN (");
+    {
+        let mut separated = query.separated(",");
+        for id in ids {
+            separated.push_bind(*id);
+        }
+        separated.push_unseparated(")");
+    }
+    let rows = query.build().fetch_all(&state.db).await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| (row.get::<String, _>("id"), request_record_json(&row)))
+        .collect())
+}
+
+async fn wait_for_request_record(state: &AppState, id: &str) -> Result<Option<Value>, AppError> {
+    let deadline = Instant::now() + REQUEST_RECORD_WAIT;
+    loop {
+        let mut records = load_request_records(state, &[id]).await?;
+        if let Some(record) = records.remove(id) {
+            return Ok(Some(record));
+        }
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
+        tokio::time::sleep(REQUEST_RECORD_POLL_INTERVAL).await;
+    }
+}
+
+/// Cost record for one request, addressed by the `x-deepseek-lb-request-id`
+/// response header of the original inference call.
+pub async fn handle_request_record(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, AppError> {
+    api_identity(&state, &headers).await?;
+    let record = wait_for_request_record(&state, &id).await?.ok_or_else(|| {
+        AppError::not_found_with_reason("request record not found", "request_not_found")
+    })?;
+    Ok(Json(record))
+}
+
+#[derive(serde::Deserialize)]
+pub struct RequestsQuery {
+    ids: Vec<String>,
+}
+
+/// Settled cost records for up to [`REQUEST_QUERY_MAX_IDS`] requests, without
+/// waiting; unresolved IDs come back for the caller to retry.
+pub async fn handle_requests_query(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<RequestsQuery>,
+) -> Result<Json<Value>, AppError> {
+    api_identity(&state, &headers).await?;
+    if input.ids.is_empty() {
+        return Err(AppError::bad_request(
+            "ids must contain at least one request ID",
+        ));
+    }
+    if input.ids.len() > REQUEST_QUERY_MAX_IDS {
+        return Err(AppError::bad_request(format!(
+            "ids must contain at most {REQUEST_QUERY_MAX_IDS} request IDs"
+        )));
+    }
+    let mut seen = HashSet::new();
+    let unique_ids = input
+        .ids
+        .iter()
+        .map(String::as_str)
+        .filter(|id| seen.insert(*id))
+        .collect::<Vec<_>>();
+    let mut records = load_request_records(&state, &unique_ids).await?;
+    let mut requests = Vec::with_capacity(unique_ids.len());
+    let mut missing = Vec::new();
+    for id in unique_ids {
+        match records.remove(id) {
+            Some(record) => requests.push(record),
+            None => missing.push(id.to_owned()),
+        }
+    }
+    Ok(Json(json!({"requests": requests, "missing": missing})))
 }
 
 async fn ensure_request_quota(
@@ -1506,6 +1633,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+        let request_id = response
+            .headers()
+            .get("x-deepseek-lb-request-id")
+            .expect("streaming responses carry the query key")
+            .to_str()
+            .unwrap()
+            .to_owned();
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let text = String::from_utf8_lossy(&body);
         assert!(text.contains("response.completed"));
@@ -1513,6 +1647,7 @@ mod tests {
 
         let audits = wait_for_audits(&state, 1).await;
         let audit = &audits[0];
+        assert_eq!(audit.get::<String, _>("id"), request_id);
         assert_eq!(audit.get::<String, _>("path"), "/v1/responses");
         assert_eq!(audit.get::<String, _>("model"), "deepseek-v4-pro");
         assert_eq!(audit.get::<i64, _>("input_tokens"), 7);
@@ -1523,6 +1658,224 @@ mod tests {
                 .get::<Option<i64>, _>("first_byte_latency_ms")
                 .is_some()
         );
+    }
+
+    async fn fetch_record(state: &AppState, path: &str, credential: &str) -> Response {
+        crate::router(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(path)
+                    .header(header::AUTHORIZATION, format!("Bearer {credential}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    async fn request_query(state: &AppState, path: &str, body: Value) -> Response {
+        crate::router(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(path)
+                    .header(header::AUTHORIZATION, format!("Bearer {CONSUMER_SECRET}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn request_record_query_returns_the_settled_amount_for_any_valid_credential() {
+        let (upstream, _) = spawn_mock().await;
+        let state = crate::test_state(&upstream).await;
+        seed_consumer(&state, payments::USD_NANOS).await;
+        seed_provider(&state, "provider-1", "sk-provider-ok").await;
+        sqlx::query(
+            "INSERT INTO consumers(id,user_id,name,prefix,secret_hash,created_at) VALUES('consumer-2','user','other','sk-other',?,0)",
+        )
+        .bind(consumer_secret_hash("sk-consumer-2-secret"))
+        .execute(&state.db)
+        .await
+        .unwrap();
+
+        let response = crate::router(state.clone())
+            .oneshot(proxy_request(
+                "/v1/chat/completions",
+                json!({"model":"deepseek-flash","messages":[{"role":"user","content":"ping"}]}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let request_id = response
+            .headers()
+            .get("x-deepseek-lb-request-id")
+            .expect("the inference response carries the query key")
+            .to_str()
+            .unwrap()
+            .to_owned();
+        response.into_body().collect().await.unwrap();
+
+        let audits = wait_for_audits(&state, 1).await;
+        let audit = &audits[0];
+        assert_eq!(audit.get::<String, _>("id"), request_id);
+
+        // A different consumer credential can read the record: lookups are
+        // addressed by request ID only.
+        let response = fetch_record(
+            &state,
+            &format!("/v1/requests/{request_id}"),
+            "sk-consumer-2-secret",
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let record: Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(record["request_id"].as_str(), Some(request_id.as_str()));
+        assert_eq!(record["status"].as_i64(), Some(200));
+        assert_eq!(record["model"].as_str(), Some("deepseek-flash"));
+        assert_eq!(
+            record["input_tokens"].as_i64(),
+            Some(audit.get::<i64, _>("input_tokens"))
+        );
+        assert_eq!(
+            record["output_tokens"].as_i64(),
+            Some(audit.get::<i64, _>("output_tokens"))
+        );
+        assert_eq!(
+            record["cached_tokens"].as_i64(),
+            Some(audit.get::<i64, _>("cached_tokens"))
+        );
+        assert_eq!(
+            record["cost_usd_nanos"].as_i64(),
+            Some(audit.get::<i64, _>("actual_cost_usd_nanos"))
+        );
+        assert_eq!(
+            record["created_at"].as_i64(),
+            Some(audit.get::<i64, _>("created_at"))
+        );
+    }
+
+    #[tokio::test]
+    async fn request_record_query_waits_for_a_settlement_that_lands_late() {
+        let state = crate::test_state("http://upstream.invalid").await;
+        seed_consumer(&state, payments::USD_NANOS).await;
+        let db = state.db.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            sqlx::query(
+                "INSERT INTO api_calls(id,request_id,consumer_id,user_id,method,path,model,status,latency_ms,input_tokens,output_tokens,cached_tokens,actual_cost_usd_nanos,error,created_at) VALUES('late-record','request-late','consumer','user','POST','/v1/chat/completions','deepseek-flash',499,10,0,0,0,7,'client_cancelled',unixepoch())",
+            )
+            .execute(&db)
+            .await
+            .unwrap();
+        });
+
+        // The bare alias resolves the same route family.
+        let response = fetch_record(&state, "/requests/late-record", CONSUMER_SECRET).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let record: Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(record["request_id"].as_str(), Some("late-record"));
+        assert_eq!(record["status"].as_i64(), Some(499));
+        assert_eq!(record["cost_usd_nanos"].as_i64(), Some(7));
+    }
+
+    #[tokio::test]
+    async fn batch_request_query_splits_settled_records_and_missing_ids() {
+        let state = crate::test_state("http://upstream.invalid").await;
+        seed_consumer(&state, payments::USD_NANOS).await;
+        for (id, status, cost) in [("record-a", 200, 5), ("record-b", 499, 0)] {
+            sqlx::query(
+                "INSERT INTO api_calls(id,request_id,consumer_id,user_id,method,path,status,latency_ms,actual_cost_usd_nanos,created_at) VALUES(?,?,'consumer','user','POST','/v1/chat/completions',?,1,?,unixepoch())",
+            )
+            .bind(id)
+            .bind(id)
+            .bind(status)
+            .bind(cost)
+            .execute(&state.db)
+            .await
+            .unwrap();
+        }
+
+        let response = request_query(
+            &state,
+            "/v1/requests/query",
+            json!({"ids":["record-b","missing-1","record-a","record-b"]}),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        let requests = body["requests"].as_array().expect("requests array");
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0]["request_id"].as_str(), Some("record-b"));
+        assert_eq!(requests[0]["status"].as_i64(), Some(499));
+        assert_eq!(requests[0]["cost_usd_nanos"].as_i64(), Some(0));
+        assert_eq!(requests[1]["request_id"].as_str(), Some("record-a"));
+        assert_eq!(requests[1]["cost_usd_nanos"].as_i64(), Some(5));
+        assert_eq!(body["missing"], json!(["missing-1"]));
+
+        // The bare alias returns HTTP 200 even when nothing is settled yet.
+        let response =
+            request_query(&state, "/requests/query", json!({"ids":["still-missing"]})).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(body["requests"], json!([]));
+        assert_eq!(body["missing"], json!(["still-missing"]));
+    }
+
+    #[tokio::test]
+    async fn request_queries_reject_invalid_input_and_missing_credentials() {
+        let state = crate::test_state("http://upstream.invalid").await;
+        seed_consumer(&state, payments::USD_NANOS).await;
+
+        let response = request_query(&state, "/v1/requests/query", json!({"ids":[]})).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let ids = (0..=REQUEST_QUERY_MAX_IDS)
+            .map(|index| format!("id-{index}"))
+            .collect::<Vec<_>>();
+        let response = request_query(&state, "/v1/requests/query", json!({"ids":ids})).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let response = crate::router(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/requests/any-id")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn request_record_query_reports_unknown_ids_with_a_reason() {
+        let state = crate::test_state("http://upstream.invalid").await;
+        seed_consumer(&state, payments::USD_NANOS).await;
+        let response = fetch_record(
+            &state,
+            "/v1/requests/00000000-0000-4000-8000-000000000000",
+            CONSUMER_SECRET,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body: Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(body["error"]["reason"].as_str(), Some("request_not_found"));
     }
 
     #[tokio::test]
