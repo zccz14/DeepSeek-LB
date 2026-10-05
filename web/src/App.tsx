@@ -717,7 +717,6 @@ const copy = {
     providerUsage7d: "近 7 天用量",
     providerUsageRequests: "请求",
     providerUsageErrors: "失败",
-    providerUsageTokens: "Token（输入 / 输出 / 命中缓存）",
     providerUsageCost: "费用",
     providerNoUsage: "近 7 天没有请求",
     providerTestTitle: "上游连通性测试",
@@ -1231,7 +1230,6 @@ const copy = {
     providerUsage7d: "Last 7 days",
     providerUsageRequests: "Requests",
     providerUsageErrors: "Failed",
-    providerUsageTokens: "Tokens (input / output / cached)",
     providerUsageCost: "Cost",
     providerNoUsage: "No requests in the last 7 days",
     providerTestTitle: "Upstream connectivity test",
@@ -4210,14 +4208,29 @@ function Providers({
                         </TableCell>
                         <TableCell>
                           {usage ? (
-                            <div className="flex flex-col text-xs">
+                            <div className="flex flex-col gap-1.5 text-xs tabular-nums">
                               <span>
-                                {t.providerUsageRequests}: {usage.requests} (
-                                {t.providerUsageErrors}: {usage.errors})
+                                {t.providerUsageRequests}:{" "}
+                                {usage.requests.toLocaleString(locale)} (
+                                {t.providerUsageErrors}:{" "}
+                                {usage.errors.toLocaleString(locale)})
                               </span>
-                              <span>
-                                {t.providerUsageTokens}: {usage.input_tokens}/
-                                {usage.output_tokens}/{usage.cached_tokens}
+                              <span className="flex flex-wrap gap-x-4 gap-y-1">
+                                <TokenMetric
+                                  label={t.input}
+                                  value={usage.input_tokens}
+                                  locale={locale}
+                                />
+                                <TokenMetric
+                                  label={t.output}
+                                  value={usage.output_tokens}
+                                  locale={locale}
+                                />
+                                <TokenMetric
+                                  label={t.cacheHitTokens}
+                                  value={usage.cached_tokens}
+                                  locale={locale}
+                                />
                               </span>
                               <span className="text-muted-foreground">
                                 {t.providerUsageCost}:{" "}
@@ -7919,6 +7932,22 @@ function StatusBadge({ status, locale }: { status: string; locale: Locale }) {
       )}
       {statusLabel(status, locale)}
     </Badge>
+  )
+}
+function TokenMetric({
+  label,
+  value,
+  locale,
+}: {
+  label: string
+  value: number
+  locale: Locale
+}) {
+  return (
+    <span className="flex flex-col gap-0.5">
+      <span className="text-muted-foreground">{label}</span>
+      <span>{value.toLocaleString(locale)}</span>
+    </span>
   )
 }
 function DataTable({ children }: { children: ReactNode }) {
