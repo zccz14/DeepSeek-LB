@@ -5,11 +5,16 @@ import { readFile } from "node:fs/promises"
 test("console delegates Linkit identity UI to the published components", async () => {
   const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8")
   const main = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8")
+  const indexHtml = await readFile(new URL("../index.html", import.meta.url), "utf8")
   const manifest = JSON.parse(
     await readFile(new URL("../package.json", import.meta.url), "utf8")
   ) as { dependencies: Record<string, string> }
 
-  assert.equal(manifest.dependencies["linkit-react-components"], "0.4.0")
+  assert.equal(manifest.dependencies["linkit-react-components"], "0.5.1")
+  assert.equal(manifest.dependencies["next-themes"], undefined)
+  assert.doesNotMatch(main, /theme-provider/)
+  assert.match(indexHtml, /localStorage\.getItem\("linkit\.theme"\)/)
+  assert.match(app, /function LinkitToaster[\s\S]{0,160}?theme=\{resolvedTheme\}/)
   assert.match(main, /import "linkit-react-components\/styles\.css"/)
   assert.match(app, /<LinkitProvider linkitBaseUrl="https:\/\/linkit\.ntnl\.io" lang=\{locale\}>/)
   assert.match(app, /audiences=\{authMiniAudiences\(config\.auth_audience\)\}/)

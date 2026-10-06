@@ -1597,7 +1597,7 @@ function App() {
     return (
       <TooltipProvider>
         <Setup locale={locale} setLocale={changeLocale} />
-        <Toaster richColors />
+        <Toaster richColors theme="system" />
       </TooltipProvider>
     )
   if (!config.auth_issuer || !config.auth_audience)
@@ -1616,11 +1616,17 @@ function App() {
         <LinkitProvider linkitBaseUrl="https://linkit.ntnl.io" lang={locale}>
           <LinkitLanguageSync setLocale={changeLocale} />
           <AuthenticatedConsole locale={locale} />
+          <LinkitToaster />
         </LinkitProvider>
       </AuthMiniProvider>
-      <Toaster richColors />
     </TooltipProvider>
   )
+}
+
+// The toaster themes itself from the Linkit-resolved theme.
+function LinkitToaster() {
+  const { resolvedTheme } = useLinkit()
+  return <Toaster richColors theme={resolvedTheme} />
 }
 
 function LinkitLanguageSync({

@@ -8,6 +8,18 @@
       content="DeepSeek API load balancer and Provider / Consumer operations console"
     />
     <meta name="theme-color" content="#ffffff" />
+    <script>
+      // Linkit owns the dark mode preference (see linkit-react-components);
+      // apply the mirrored preference before the first paint.
+      (function () {
+        try {
+          var choice = localStorage.getItem("linkit.theme");
+          var dark = choice === "dark" || (choice !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.classList.toggle("dark", dark);
+          document.documentElement.style.colorScheme = dark ? "dark" : "light";
+        } catch (error) {}
+      })();
+    </script>
     <link rel="icon" type="image/svg+xml" href="/deepseek.svg" />
     <title>DeepSeek-LB</title>
   </head>
