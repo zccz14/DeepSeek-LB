@@ -35,12 +35,12 @@ import {
   YAxis,
 } from "recharts"
 import {
-  LinkitMyInfo,
   LinkitProvider,
   LinkitUserInfo,
   LinkitUserPicker,
   useLinkit,
 } from "linkit-react-components"
+import { AppLayout, type AppNavGroup } from "@zccz14/ux"
 import {
   ActivityIcon,
   ArrowDownUpIcon,
@@ -142,21 +142,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarHeader,
-  SidebarInset,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarProvider,
-  SidebarTrigger,
-} from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
@@ -2044,192 +2029,159 @@ function Console({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
           } satisfies NavigationGroup,
         ]
       : []),
+    { label: t.settings, items: [["settings", SettingsIcon]] },
   ]
+  const nav: AppNavGroup[] = navigationGroups.map((group) => ({
+    label: group.label,
+    items: group.items.map(([item, Icon]) => ({
+      to: `/${item}`,
+      label: t[item],
+      icon: <Icon />,
+    })),
+  }))
+
   return (
-    <SidebarProvider>
-      <Sidebar collapsible="icon">
-        <SidebarHeader className="border-b p-3">
-          <div className="flex min-w-0 items-center gap-2">
-            <img
-              alt=""
-              aria-hidden="true"
-              className="size-7 shrink-0"
-              src="/deepseek.svg"
-            />
-            <div className="flex min-w-0 flex-col gap-0.5 group-data-[collapsible=icon]:hidden">
-              <strong className="truncate text-sm">{t.title}</strong>
-              <span className="truncate text-xs text-muted-foreground">
-                {t.subtitle}
-              </span>
-            </div>
-          </div>
-        </SidebarHeader>
-        <SidebarContent>
-          {navigationGroups.map((group) => (
-            <SidebarGroup key={group.label}>
-              <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  {group.items.map(([item, Icon]) => (
-                    <SidebarMenuItem key={item}>
-                      <SidebarMenuButton
-                        isActive={page === item}
-                        onClick={() => navigate(`/${item}`)}
-                      >
-                        <Icon />
-                        <span>{t[item]}</span>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-          ))}
-        </SidebarContent>
-        <SidebarFooter className="border-t p-3">
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                isActive={page === "settings"}
-                onClick={() => navigate("/settings")}
-              >
-                <SettingsIcon />
-                <span>{t.settings}</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarFooter>
-      </Sidebar>
-      <SidebarInset className="overflow-auto">
-        <header className="sticky top-0 flex h-14 items-center gap-3 border-b bg-background px-4">
-          <SidebarTrigger />
-          <Separator orientation="vertical" className="h-5!" />
-          <Badge variant="outline">
-            {user ? roleLabel(user.role, locale) : t.roleLoading}
-          </Badge>
-          <div className="ml-auto">
-            <LinkitMyInfo />
-          </div>
-        </header>
-        <div className="flex flex-1 flex-col gap-5 p-4 md:p-6">
-          <PageHeader
-            title={pageTitle(page, locale)}
-            description={pageDescription(page, locale)}
+    <AppLayout
+      logo={{
+        light: (
+          <img
+            alt=""
+            aria-hidden="true"
+            className="size-7 shrink-0"
+            src="/deepseek.svg"
           />
-          {userError ? (
-            <ErrorState message={message(userError)} />
-          ) : userLoading || !user ? (
-            <LoadingTable />
-          ) : (
-            <Routes>
-              <Route path="/" element={<Navigate replace to="/dashboard" />} />
-              <Route
-                path="/dashboard"
-                element={<Dashboard sdk={sdk} locale={locale} />}
-              />
-              <Route
-                path="/providers"
-                element={<Providers sdk={sdk} locale={locale} user={user} />}
-              />
-              <Route
-                path="/consumers"
-                element={<Consumers sdk={sdk} locale={locale} />}
-              />
-              <Route
-                path="/codex-integration"
-                element={<CodexIntegrationPage sdk={sdk} locale={locale} />}
-              />
-              <Route
-                path="/dsh-integration"
-                element={<DshIntegrationPage sdk={sdk} locale={locale} />}
-              />
-              <Route
-                path="/opencode-integration"
-                element={<OpenCodeIntegrationPage sdk={sdk} locale={locale} />}
-              />
-              <Route
-                path="/direct-api-integration"
-                element={<DirectApiIntegrationPage locale={locale} />}
-              />
-              <Route
-                path="/web-search"
-                element={<WebSearchPage sdk={sdk} locale={locale} />}
-              />
-              <Route
-                path="/usage"
-                element={<UsagePage sdk={sdk} locale={locale} user={user} />}
-              />
-              <Route
-                path="/audit"
-                element={
-                  <AuditPage
-                    sdk={sdk}
-                    locale={locale}
-                    onOpenDetail={(id) =>
-                      navigate({
-                        pathname: `/audit/${id}`,
-                        search: location.search,
-                      })
-                    }
-                  />
-                }
-              />
-              <Route
-                path="/audit/:auditId"
-                element={<RequestDetailPage sdk={sdk} locale={locale} />}
-              />
-              <Route
-                path="/topups"
-                element={<TopupsPage sdk={sdk} locale={locale} />}
-              />
-              <Route
-                path="/model-prices"
-                element={<ModelPricesPage sdk={sdk} locale={locale} />}
-              />
-              <Route
-                path="/system-resources"
-                element={
-                  isAdministrator ? (
-                    <SystemResourcesCard sdk={sdk} locale={locale} />
-                  ) : (
-                    <Navigate replace to="/dashboard" />
-                  )
-                }
-              />
-              <Route
-                path="/admin-audit"
-                element={
-                  isAdministrator ? (
-                    <AdminAuditPage sdk={sdk} locale={locale} />
-                  ) : (
-                    <Navigate replace to="/dashboard" />
-                  )
-                }
-              />
-              <Route
-                path="/provider-audit"
-                element={
-                  isAdministrator ? (
-                    <ProviderAuditPage sdk={sdk} locale={locale} />
-                  ) : (
-                    <Navigate replace to="/dashboard" />
-                  )
-                }
-              />
-              <Route
-                path="/users"
-                element={<UsersPage sdk={sdk} locale={locale} user={user} />}
-              />
-              <Route
-                path="/settings"
-                element={<SettingsPage sdk={sdk} user={user} locale={locale} />}
-              />
-              <Route path="*" element={<Navigate replace to="/dashboard" />} />
-            </Routes>
-          )}
-        </div>
-      </SidebarInset>
-    </SidebarProvider>
+        ),
+        dark: (
+          <img
+            alt=""
+            aria-hidden="true"
+            className="size-7 shrink-0"
+            src="/deepseek.svg"
+          />
+        ),
+      }}
+      title={t.title}
+      nav={nav}
+      pageTitle={pageTitle(page, locale)}
+    >
+      <div className="flex flex-1 flex-col gap-5">
+        <PageHeader
+          title={pageTitle(page, locale)}
+          description={pageDescription(page, locale)}
+        />
+        {userError ? (
+          <ErrorState message={message(userError)} />
+        ) : userLoading || !user ? (
+          <LoadingTable />
+        ) : (
+          <Routes>
+            <Route path="/" element={<Navigate replace to="/dashboard" />} />
+            <Route
+              path="/dashboard"
+              element={<Dashboard sdk={sdk} locale={locale} />}
+            />
+            <Route
+              path="/providers"
+              element={<Providers sdk={sdk} locale={locale} user={user} />}
+            />
+            <Route
+              path="/consumers"
+              element={<Consumers sdk={sdk} locale={locale} />}
+            />
+            <Route
+              path="/codex-integration"
+              element={<CodexIntegrationPage sdk={sdk} locale={locale} />}
+            />
+            <Route
+              path="/dsh-integration"
+              element={<DshIntegrationPage sdk={sdk} locale={locale} />}
+            />
+            <Route
+              path="/opencode-integration"
+              element={<OpenCodeIntegrationPage sdk={sdk} locale={locale} />}
+            />
+            <Route
+              path="/direct-api-integration"
+              element={<DirectApiIntegrationPage locale={locale} />}
+            />
+            <Route
+              path="/web-search"
+              element={<WebSearchPage sdk={sdk} locale={locale} />}
+            />
+            <Route
+              path="/usage"
+              element={<UsagePage sdk={sdk} locale={locale} user={user} />}
+            />
+            <Route
+              path="/audit"
+              element={
+                <AuditPage
+                  sdk={sdk}
+                  locale={locale}
+                  onOpenDetail={(id) =>
+                    navigate({
+                      pathname: `/audit/${id}`,
+                      search: location.search,
+                    })
+                  }
+                />
+              }
+            />
+            <Route
+              path="/audit/:auditId"
+              element={<RequestDetailPage sdk={sdk} locale={locale} />}
+            />
+            <Route
+              path="/topups"
+              element={<TopupsPage sdk={sdk} locale={locale} />}
+            />
+            <Route
+              path="/model-prices"
+              element={<ModelPricesPage sdk={sdk} locale={locale} />}
+            />
+            <Route
+              path="/system-resources"
+              element={
+                isAdministrator ? (
+                  <SystemResourcesCard sdk={sdk} locale={locale} />
+                ) : (
+                  <Navigate replace to="/dashboard" />
+                )
+              }
+            />
+            <Route
+              path="/admin-audit"
+              element={
+                isAdministrator ? (
+                  <AdminAuditPage sdk={sdk} locale={locale} />
+                ) : (
+                  <Navigate replace to="/dashboard" />
+                )
+              }
+            />
+            <Route
+              path="/provider-audit"
+              element={
+                isAdministrator ? (
+                  <ProviderAuditPage sdk={sdk} locale={locale} />
+                ) : (
+                  <Navigate replace to="/dashboard" />
+                )
+              }
+            />
+            <Route
+              path="/users"
+              element={<UsersPage sdk={sdk} locale={locale} user={user} />}
+            />
+            <Route
+              path="/settings"
+              element={<SettingsPage sdk={sdk} user={user} locale={locale} />}
+            />
+            <Route path="*" element={<Navigate replace to="/dashboard" />} />
+          </Routes>
+        )}
+      </div>
+    </AppLayout>
   )
 }
 
