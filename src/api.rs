@@ -1494,6 +1494,7 @@ pub async fn settings(
         "auth_audience":config.auth_audience,
         "upstream_base":config.upstream_base,
         "available_model_ids":config.available_model_ids,
+        "web_search_model":config.web_search_model,
         "allow_all_users_debt":config.allow_all_users_debt,
         "response_body_limit":config.response_body_limit,
         "affinity_ttl_seconds":config.affinity_ttl_seconds,
@@ -1580,6 +1581,42 @@ pub async fn update_available_model_ids(
         &state,
         &user.id,
         "settings.available_models.update",
+        None,
+        &peer.ip().to_string(),
+    )
+    .await?;
+    Ok(Json(json!({"ok":true})))
+}
+
+#[derive(Deserialize)]
+pub struct UpdateWebSearchModel {
+    web_search_model: String,
+}
+
+/// The model that runs the auxiliary turn behind one `/v1/web-search` call.
+pub async fn update_web_search_model(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Extension(user): Extension<UserIdentity>,
+    Json(input): Json<UpdateWebSearchModel>,
+) -> Result<Json<Value>, AppError> {
+    require_admin(&user)?;
+    let web_search_model = required_setting("web search model", &input.web_search_model)?;
+    {
+        let _write = state.write_gate.lock().await;
+        sqlx::query("UPDATE app_meta SET value=?,updated_at=? WHERE key='web_search_model'")
+            .bind(&web_search_model)
+            .bind(chrono::Utc::now().timestamp())
+            .execute(&state.db)
+            .await?;
+        let mut config = (**state.config.load()).clone();
+        config.web_search_model = web_search_model;
+        state.config.store(std::sync::Arc::new(config));
+    }
+    write_admin_audit(
+        &state,
+        &user.id,
+        "settings.web_search.update",
         None,
         &peer.ip().to_string(),
     )
@@ -2263,6 +2300,47 @@ mod tests {
                 "settings.provider_concurrency.update",
                 "settings.update",
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn the_web_search_model_is_a_persisted_operational_setting() {
+        let state = crate::test_state("http://upstream.invalid").await;
+        seed_users(&state).await;
+
+        let _ = update_web_search_model(
+            State(state.clone()),
+            peer(),
+            Extension(root_identity()),
+            Json(UpdateWebSearchModel {
+                web_search_model: " deepseek-v4-pro ".to_owned(),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(state.config.load().web_search_model, "deepseek-v4-pro");
+        let stored: String =
+            sqlx::query_scalar("SELECT value FROM app_meta WHERE key='web_search_model'")
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        assert_eq!(stored, "deepseek-v4-pro");
+
+        let error = update_web_search_model(
+            State(state.clone()),
+            peer(),
+            Extension(root_identity()),
+            Json(UpdateWebSearchModel {
+                web_search_model: "   ".to_owned(),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.status(), axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(
+            state.config.load().web_search_model,
+            "deepseek-v4-pro",
+            "a rejected value leaves the running configuration alone"
         );
     }
 

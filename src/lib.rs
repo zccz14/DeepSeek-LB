@@ -14,6 +14,7 @@ pub mod payments;
 pub mod pricing;
 pub mod proxy;
 pub mod resources;
+pub mod web_search;
 
 use std::{sync::Arc, time::Duration};
 
@@ -103,6 +104,11 @@ pub fn router(state: AppState) -> Router {
     let browser_api = Router::new()
         .route("/api/me", get(api::me))
         .route(
+            "/api/web-search",
+            post(proxy::handle_console_web_search)
+                .layer(RequestBodyLimitLayer::new(proxy::WEB_SEARCH_BODY_LIMIT)),
+        )
+        .route(
             "/api/consumers",
             get(api::list_consumers).post(api::create_consumer),
         )
@@ -156,6 +162,10 @@ pub fn router(state: AppState) -> Router {
             "/api/settings/provider-concurrency",
             patch(api::update_provider_concurrency),
         )
+        .route(
+            "/api/settings/web-search",
+            patch(api::update_web_search_model),
+        )
         .route("/api/users", get(api::list_users))
         .route("/api/users/{id}", patch(api::update_user))
         .route_layer(from_fn_with_state(state.clone(), auth::authenticate));
@@ -179,6 +189,16 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v1/models", get(proxy::handle_models))
         .route("/models", get(proxy::handle_models))
+        .route(
+            "/v1/web-search",
+            post(proxy::handle_json)
+                .layer(RequestBodyLimitLayer::new(proxy::WEB_SEARCH_BODY_LIMIT)),
+        )
+        .route(
+            "/web-search",
+            post(proxy::handle_json)
+                .layer(RequestBodyLimitLayer::new(proxy::WEB_SEARCH_BODY_LIMIT)),
+        )
         .route(
             "/v1/requests/query",
             post(proxy::handle_requests_query)
@@ -514,6 +534,7 @@ pub(crate) async fn test_state(upstream_base: &str) -> AppState {
         auth_audience: None,
         upstream_base: upstream_base.to_owned(),
         available_model_ids: config::default_available_model_ids(),
+        web_search_model: "deepseek-flash".to_owned(),
         allow_all_users_debt: false,
         response_body_limit: 1024 * 1024,
         affinity_ttl_seconds: 3600,

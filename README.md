@@ -2,7 +2,7 @@
 
 DeepSeek-LB 是 DeepSeek API 的反向代理与负载均衡器。它以单个 Rust 可执行文件交付，内嵌 React + shadcn 管理界面，并使用 SQLite 保存配置、权限、上游提供商、Consumer、用量和逐调用审计。
 
-服务只代理 DeepSeek，不兼容其他 AI 厂商协议：下游可使用 OpenAI 兼容的 `/v1/chat/completions`、`/v1/responses` 与 `/v1/models`（同时提供不带 `/v1` 前缀的别名）。
+服务只代理 DeepSeek，不兼容其他 AI 厂商协议：下游可使用 OpenAI 兼容的 `/v1/chat/completions`、`/v1/responses` 与 `/v1/models`（同时提供不带 `/v1` 前缀的别名），以及把 DeepSeek 原生联网搜索封装成独立接口的 `/v1/web-search`。
 
 ## 功能
 
@@ -10,6 +10,7 @@ DeepSeek-LB 是 DeepSeek API 的反向代理与负载均衡器。它以单个 Ru
 - 每个 Provider 有 `public` / `private` 可见性，默认 `private`：`private` 只服务拥有者名下的 Consumer，`public` 进入全站共享池。
 - Consumer 是下游 AI App 使用的凭据（`sk-*`，只在创建或轮换时展示一次）。
 - 逐调用审计：模型、Provider、Token 用量、缓存命中、峰谷时段、费用、首字节与总延迟、错误码，以及可选的请求/响应诊断正文。
+- 联网搜索：`/v1/web-search` 用一次 DeepSeek 原生 `web_search` 检索网页来源，返回按 URL 去重的来源与本次用量；宿主模型由 root/管理员在“设置 → 联网搜索”配置，控制台也有同名工具页可直接试用。
 - 请求费用查询：下游记录响应头 `x-deepseek-lb-request-id` 后，可按单条或批量查询每次调用的实收金额与用量；支持上游网关（NormAI）通过 `x-normai-request-id` 传入统一请求 ID，跨上游的定价差异由各负载均衡器内部处理。
 - 费用核算使用 DeepSeek 官方美元价格，区分高峰（peak）与非高峰（off-peak）两档；中国法定节假日全天按非高峰计费。
 - Midas 预付费：用户向 fund 账户充值后即可调用；未充值且未开启欠费的请求返回 HTTP 402。
@@ -71,6 +72,26 @@ curl https://deepseek.ntnl.io/v1/models -H 'Authorization: Bearer <YOUR_CONSUMER
 ```
 
 可调用的模型由 root/admin 在“设置 → 可用模型”中维护，默认 `deepseek-flash` 与 `deepseek-v4-pro`；不在白名单中的模型会在到达上游之前以 HTTP 400 拒绝。
+
+### 联网搜索
+
+```bash
+curl https://deepseek.ntnl.io/v1/web-search \
+  -H 'Authorization: Bearer <YOUR_CONSUMER_KEY>' \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"latest DeepSeek release","max_results":8,"max_uses":1,"allowed_domains":["api-docs.deepseek.com"]}'
+```
+
+`/v1/web-search` 把 DeepSeek 原生 `web_search` 封装为独立的搜索 API，供不使用对话协议的下游调用：用 Consumer 密钥发起，宿主模型由“设置 → 联网搜索”中的 `web_search_model` 配置（默认 `deepseek-flash`），响应包含本次实际执行的搜索词、按 URL 去重的来源与本次用量。DeepSeek 没有专用搜索端点，因此每次搜索实际是一次携带 `web_search_20250305` 服务端工具的 Messages 轮次，发往上游 Anthropic 兼容端点 `{upstream_base}/anthropic/v1/messages`，按宿主模型的 Token 价格计费并计入该 Consumer 的用量与审计。搜索与推理共用同一健康上游池与冷却规则：上游返回 401/402/403/429 后，本次搜索会在另一个可用 Provider 上重试一次。
+
+请求体除必填的 `query` 外，还可选地带四个搜索参数，非法值一律返回 400，不会被静默忽略：
+
+- `max_results`：返回来源数量上限（1–50，默认 8）。DeepSeek 没有结果数量参数，因此该上限只在上游返回后按 URL 去重并截断，不改变本次搜索的成本。
+- `max_uses`：本轮允许的服务端搜索次数（1–5，默认 5）；次数越多，推理 Token 与费用越高。
+- `allowed_domains` 或 `blocked_domains`：裸域名数组，子域名自动包含；两者只能用其一。
+- `user_location`：`country`、`region`、`city`、`timezone` 组成的近似位置对象。
+
+结果是 DeepSeek 原生搜索返回的结构化来源（`url`、可选的 `title`、`snippet`、`published_at`），不包含模型生成的回答；没有可引用来源时以 HTTP 502 与 `web_search_data_missing` 失败，而不是返回空结果。控制台的“联网搜索”工具页调用同一能力（`POST /api/web-search`），使用登录用户的隐藏控制台 Consumer，同样写入审计并按该用户的余额计费。
 
 ### 请求费用查询
 

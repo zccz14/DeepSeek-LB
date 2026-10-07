@@ -15,11 +15,11 @@ product
 
 ## Product Purpose
 
-本产品是一个以 Rust 编写、以 SQLite 持久化、最终可作为单一 Binary 部署的 DeepSeek API 反向代理与负载均衡系统。用户用一条 DeepSeek API Key 注册一个上游提供商，root 与管理员可管理全局 Provider 池；系统只代理 DeepSeek 接口（OpenAI 兼容的对话补全、Responses API 与模型列表），不兼容其他 AI 厂商协议。
+本产品是一个以 Rust 编写、以 SQLite 持久化、最终可作为单一 Binary 部署的 DeepSeek API 反向代理与负载均衡系统。用户用一条 DeepSeek API Key 注册一个上游提供商，root 与管理员可管理全局 Provider 池；系统只代理 DeepSeek 接口（OpenAI 兼容的对话补全、Responses API 与模型列表，以及封装 DeepSeek 原生联网搜索的网页搜索接口），不兼容其他 AI 厂商协议。
 
 每个上游 Provider 有 `public` / `private` 可见性，默认 `private`：`private` Provider 只服务其拥有者名下的 Consumer，`public` 才进入全站共享上游池；拥有者可在 Provider 页面自行切换。
 
-成功意味着：租户能用自有 Consumer 稳定访问公开 Provider 与自有 Provider 组成的健康上游池；租户在 Provider 页面只看到自己的 Provider，管理员可看到全部；系统能按 Consumer 统计用量、为每次 API Call 留下基础审计记录；调度具备上游提供商亲和性；上游提供商 Rate Limit 可被跟踪，并能在受限或异常时自动禁用、在条件满足后自动恢复；管理员能从 UI 快速判断当前服务状态并采取行动。
+成功意味着：租户能用自有 Consumer 稳定访问公开 Provider 与自有 Provider 组成的健康上游池；租户在 Provider 页面只看到自己的 Provider，管理员可看到全部；系统能按 Consumer 统计用量、为每次 API Call 留下基础审计记录；调度具备上游提供商亲和性；上游提供商 Rate Limit 可被跟踪，并能在受限或异常时自动禁用、在条件满足后自动恢复；联网搜索与推理共用同一健康上游池、计费与审计，并能在控制台的联网搜索页直接验证；管理员能从 UI 快速判断当前服务状态并采取行动。
 
 ## Brand Personality
 
