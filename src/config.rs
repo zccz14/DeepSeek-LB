@@ -87,6 +87,8 @@ pub struct Config {
     pub auth_audience: Option<String>,
     pub upstream_base: String,
     pub available_model_ids: Vec<String>,
+    /// Model that runs the auxiliary turn behind one `/v1/web-search` call.
+    pub web_search_model: String,
     pub allow_all_users_debt: bool,
     pub response_body_limit: usize,
     pub affinity_ttl_seconds: i64,
@@ -137,6 +139,7 @@ impl Config {
                 "available_model_ids",
             )?)?)
             .map_err(anyhow::Error::msg)?,
+            web_search_model: value("web_search_model")?.trim().to_owned(),
             allow_all_users_debt: value("allow_all_users_debt")?.parse()?,
             response_body_limit: value("response_body_limit")?.parse()?,
             affinity_ttl_seconds: value("affinity_ttl_seconds")?.parse()?,

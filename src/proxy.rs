@@ -8,7 +8,7 @@ use std::{
 use axum::{
     Json,
     body::{Body, Bytes},
-    extract::{ConnectInfo, OriginalUri, Path, State},
+    extract::{ConnectInfo, Extension, OriginalUri, Path, State},
     http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version, header},
     response::Response,
 };
@@ -21,10 +21,12 @@ use uuid::Uuid;
 use crate::{
     AppError, AppState,
     audit::{ARCHIVE_BODY_LIMIT, AuditEvent, AuditReservation},
-    auth::{ApiIdentity, api_identity},
+    auth::{ApiIdentity, UserIdentity, api_identity},
     balancer::{Downstream, Lease, affinity_hash, track_response},
+    crypto::consumer_secret_hash,
     midas,
     pricing::{self, Usage},
+    web_search,
 };
 
 const HOP_HEADERS: &[&str] = &[
@@ -48,6 +50,8 @@ const PROXY_ONLY_HEADERS: &[&str] = &["x-lb-affinity-key"];
 struct CallContext {
     model: Option<String>,
     stream: bool,
+    /// Source bound of a `/v1/web-search` envelope; `None` for inference calls.
+    max_results: Option<usize>,
 }
 
 struct RequestAuditContext {
@@ -62,6 +66,7 @@ struct RequestAuditContext {
 enum Endpoint {
     ChatCompletions,
     Responses,
+    WebSearch,
 }
 
 impl Endpoint {
@@ -69,6 +74,7 @@ impl Endpoint {
         match path {
             "/v1/chat/completions" | "/chat/completions" => Some(Self::ChatCompletions),
             "/v1/responses" | "/responses" => Some(Self::Responses),
+            "/v1/web-search" | "/web-search" => Some(Self::WebSearch),
             _ => None,
         }
     }
@@ -78,6 +84,7 @@ impl Endpoint {
         match self {
             Self::ChatCompletions => "/v1/chat/completions",
             Self::Responses => "/v1/responses",
+            Self::WebSearch => "/v1/web-search",
         }
     }
 
@@ -86,6 +93,18 @@ impl Endpoint {
         match self {
             Self::ChatCompletions => "/chat/completions",
             Self::Responses => "/responses",
+            Self::WebSearch => web_search::MESSAGES_PATH,
+        }
+    }
+
+    /// Headers the upstream protocol requires beyond `Authorization`. The
+    /// Anthropic-compatible Messages endpoint agrees on a protocol version;
+    /// DeepSeek ignores the value, but the DSH search provider sends it and the
+    /// endpoint speaks a different protocol from the OpenAI-compatible pair.
+    fn protocol_headers(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            Self::ChatCompletions | Self::Responses => &[],
+            Self::WebSearch => &[("anthropic-version", web_search::ANTHROPIC_VERSION)],
         }
     }
 }
@@ -94,6 +113,8 @@ struct ProxyRequest {
     body: Bytes,
     model: Option<String>,
     stream: bool,
+    /// Source bound of a `/v1/web-search` envelope; `None` for inference calls.
+    max_results: Option<usize>,
 }
 
 struct AuditStart<'a> {
@@ -490,6 +511,64 @@ pub async fn handle_json(
     dispatch(state, identity, audit, uri.path(), &headers, &body).await
 }
 
+/// `/api/web-search`: the console runs the same search the data plane runs, so
+/// operators can verify the wiring without a Consumer credential.
+pub async fn handle_console_web_search(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Extension(user): Extension<UserIdentity>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, AppError> {
+    let identity = console_api_identity(&state, &user).await?;
+    let audit = RequestAuditContext {
+        request_id: unified_request_id(&headers),
+        thread_id: thread_id(&headers),
+        method: Method::POST,
+        client_ip: peer.ip().to_string(),
+    };
+    // INVARIANT: The console enters the data plane through the canonical API
+    // path, so every search is described by one audit row shape.
+    dispatch(
+        state,
+        identity,
+        audit,
+        Endpoint::WebSearch.audit_path(),
+        &headers,
+        &body,
+    )
+    .await
+}
+
+/// The caller's hidden console consumer: console searches are audited and
+/// billed like API calls, but without a credential the user has to paste.
+async fn console_api_identity(
+    state: &AppState,
+    user: &UserIdentity,
+) -> Result<ApiIdentity, AppError> {
+    let consumer_id = format!("console-{}", consumer_secret_hash(&user.id));
+    let allow_debt = sqlx::query_scalar::<_, i64>("SELECT allow_debt FROM users WHERE id=?")
+        .bind(&user.id)
+        .fetch_one(&state.db)
+        .await?
+        != 0;
+    let _write = state.write_gate.lock().await;
+    sqlx::query("INSERT INTO consumers(id,user_id,name,prefix,secret_hash,request_archive,is_system,created_at) VALUES(?,?, 'DeepSeek-LB Console','console',?,1,1,?) ON CONFLICT(id) DO NOTHING")
+        .bind(&consumer_id)
+        .bind(&user.id)
+        .bind(consumer_secret_hash(&Uuid::new_v4().to_string()))
+        .bind(chrono::Utc::now().timestamp())
+        .execute(&state.db)
+        .await?;
+    Ok(ApiIdentity {
+        consumer_id,
+        user_id: user.id.clone(),
+        request_archive: true,
+        is_admin: matches!(user.role.as_str(), "root" | "admin"),
+        allow_debt,
+    })
+}
+
 pub async fn handle_models(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -511,6 +590,10 @@ const REQUEST_QUERY_MAX_IDS: usize = 1000;
 
 /// Request body cap for batch queries; 1000 UUIDs fit in about 40 KiB.
 pub(crate) const REQUEST_QUERY_BODY_LIMIT: usize = 256 * 1024;
+
+/// Request body cap for one web search; a query plus its bounds is tiny, and a
+/// search turn is charged for, so the cap stays far below an inference body.
+pub(crate) const WEB_SEARCH_BODY_LIMIT: usize = 64 * 1024;
 
 /// Column set shared by both query shapes; the response field names are fixed
 /// by [`request_record_json`].
@@ -694,8 +777,16 @@ async fn dispatch(
         let context = CallContext {
             model: request.model.clone(),
             stream: request.stream,
+            max_results: request.max_results,
         };
-        relay_response(&state, context, lease, upstream, &mut audit).await
+        match endpoint {
+            Endpoint::WebSearch => {
+                web_search_response(&state, context, lease, upstream, &mut audit).await
+            }
+            Endpoint::ChatCompletions | Endpoint::Responses => {
+                relay_response(&state, context, lease, upstream, &mut audit).await
+            }
+        }
     }
     .await;
     finish_audit_error(&mut audit, result)
@@ -709,6 +800,9 @@ fn prepare_request(
     let value = parsed.ok_or_else(|| AppError::bad_request("JSON request body required"))?;
     if !value.is_object() {
         return Err(AppError::bad_request("JSON object required"));
+    }
+    if endpoint == Endpoint::WebSearch {
+        return prepare_web_search_request(&value, state);
     }
     let model = value
         .get("model")
@@ -731,6 +825,24 @@ fn prepare_request(
         body: serde_json::to_vec(&value)?.into(),
         model: Some(model),
         stream,
+        max_results: None,
+    })
+}
+
+/// Translate one `/v1/web-search` body into the Anthropic-compatible Messages
+/// request that runs the search on the host model.
+///
+/// The endpoint takes a query and search controls, never a model:
+/// `web_search_model` is a deployment setting, so a caller cannot steer which
+/// model — and which price — serves the search turn.
+fn prepare_web_search_request(value: &Value, state: &AppState) -> Result<ProxyRequest, AppError> {
+    let search = web_search::search_request_from_json(value)?;
+    let model = state.config.load().web_search_model.clone();
+    Ok(ProxyRequest {
+        body: serde_json::to_vec(&web_search::request_body(&model, &search))?.into(),
+        model: Some(model),
+        stream: false,
+        max_results: Some(search.options.max_results),
     })
 }
 
@@ -925,6 +1037,9 @@ async fn send_upstream(
     request = request
         .header(header::AUTHORIZATION, format!("Bearer {}", lease.api_key))
         .header(header::CONTENT_TYPE, "application/json");
+    for (name, value) in endpoint.protocol_headers() {
+        request = request.header(*name, *value);
+    }
     let request = request.body(body).build()?;
     audit.set_upstream_request_headers(request.headers());
     Ok(state.client.execute(request).await?)
@@ -1058,6 +1173,63 @@ async fn relay_response(
         drop(lease);
     };
     let mut response = build_response(status, headers, Body::from_stream(output))?;
+    if let Some(id) = audit_id {
+        response.extensions_mut().insert(id);
+    }
+    Ok(response)
+}
+
+/// Answer a `/v1/web-search` call with its normalized sources and the token
+/// usage of the search turn. Failures keep the upstream status and body, which
+/// is where DeepSeek explains what went wrong with the turn.
+async fn web_search_response(
+    state: &AppState,
+    context: CallContext,
+    lease: Lease,
+    upstream: UpstreamResponse,
+    audit: &mut AuditTracker,
+) -> Result<Response, AppError> {
+    let status = upstream.status();
+    if !status.is_success() {
+        return relay_response(state, context, lease, upstream, audit).await;
+    }
+    audit.mark_first_byte();
+    audit.set_upstream_http_version(upstream.version());
+    audit.set_response_headers(upstream.headers());
+    let bytes = upstream.into_bytes().await?;
+    let turn = serde_json::from_slice::<Value>(&bytes).map_err(|_| {
+        AppError::upstream(
+            502,
+            "Web search failed: the DeepSeek response body was not JSON.",
+        )
+    })?;
+    let (sources, truncated) = web_search::sources_from_response(
+        &turn,
+        context
+            .max_results
+            .unwrap_or(web_search::DEFAULT_MAX_RESULTS),
+    )?;
+    let usage = web_search::usage_from_response(&turn);
+    let model = context.model.as_deref();
+    let envelope = serde_json::to_vec(&json!({
+        "created": chrono::Utc::now().timestamp(),
+        "model": model,
+        "queries": web_search::queries_from_response(&turn),
+        "sources": sources,
+        "truncated": truncated,
+        "usage": usage,
+    }))?;
+    audit.set_response_size(envelope.len() as i64);
+    audit.set_response_body(&envelope, false);
+    let audit_id = audit.finish(StatusCode::OK, model, usage, None);
+    let mut response = build_response(
+        StatusCode::OK,
+        vec![(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        )],
+        Body::from(envelope),
+    )?;
     if let Some(id) = audit_id {
         response.extensions_mut().insert(id);
     }
@@ -1460,6 +1632,15 @@ mod tests {
                 ))
                 .unwrap();
         }
+        if uri.path() == "/anthropic/v1/messages" {
+            assert_eq!(
+                headers
+                    .get("anthropic-version")
+                    .and_then(|value| value.to_str().ok()),
+                Some("2023-06-01")
+            );
+            return Json(anthropic_search_response(&body)).into_response();
+        }
         let payload = serde_json::from_slice::<Value>(&body).unwrap_or(Value::Null);
         let stream = payload
             .get("stream")
@@ -1513,6 +1694,58 @@ mod tests {
         }
     }
 
+    /// One Anthropic-compatible Messages turn: a server-side search use, its
+    /// structured results, and the model prose that cites one of them.
+    fn anthropic_search_response(request: &Bytes) -> Value {
+        let request = serde_json::from_slice::<Value>(request).unwrap_or(Value::Null);
+        let query = request
+            .pointer("/messages/0/content/0/text")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(
+            query.starts_with("Perform a web search for the query: "),
+            "the search turn carries the DeepSeek Harness instruction"
+        );
+        if query.contains("no results") {
+            return json!({
+                "id": "msg-empty",
+                "model": "deepseek-flash",
+                "content": [{"type": "text", "text": "I already know the answer."}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 9, "output_tokens": 12, "server_tool_use": {"web_search_requests": 0}},
+            });
+        }
+        json!({
+            "id": "msg-search",
+            "model": "deepseek-flash",
+            "content": [
+                {"type": "server_tool_use", "name": "web_search", "input": {"query": "rust release"}},
+                {"type": "server_tool_use", "name": "web_search", "input": {"query": "rust release"}},
+                {
+                    "type": "web_search_tool_result",
+                    "tool_use_id": "srvtoolu_1",
+                    "content": [
+                        {"type": "web_search_result", "url": "https://example.com/one", "title": "One", "page_age": "2026-10-01"},
+                        {"type": "web_search_result", "url": "https://example.com/two", "title": "Two"},
+                    ],
+                },
+                {
+                    "type": "text",
+                    "text": "Rust 1.93 is out.",
+                    "citations": [{"type": "web_search_result_location", "url": "https://example.com/two", "cited_text": "two excerpt"}],
+                },
+            ],
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": 9,
+                "output_tokens": 40,
+                "cache_read_input_tokens": 2,
+                "cache_creation_input_tokens": 1,
+                "server_tool_use": {"web_search_requests": 1},
+            },
+        })
+    }
+
     async fn spawn_mock() -> (String, Arc<Mutex<Vec<RecordedRequest>>>) {
         let records = Arc::new(Mutex::new(Vec::new()));
         let mock = MockUpstream {
@@ -1520,6 +1753,7 @@ mod tests {
         };
         let app = Router::new()
             .route("/chat/completions", post(mock_upstream))
+            .route("/anthropic/v1/messages", post(mock_upstream))
             .route("/responses", post(mock_upstream))
             .route("/user/balance", get(mock_upstream))
             .with_state(mock);
@@ -1647,6 +1881,249 @@ mod tests {
             audit.get::<i64, _>("actual_cost_usd_nanos"),
             audit.get::<i64, _>("official_cost_usd_nanos")
         );
+    }
+
+    #[tokio::test]
+    async fn web_search_returns_normalized_sources_and_bills_the_search_turn() {
+        let (upstream, records) = spawn_mock().await;
+        let state = crate::test_state(&upstream).await;
+        seed_consumer(&state, payments::USD_NANOS).await;
+        seed_provider(&state, "provider-1", "sk-provider-ok").await;
+
+        let response = crate::router(state.clone())
+            .oneshot(proxy_request(
+                "/v1/web-search",
+                json!({
+                    "query":"rust 1.93",
+                    "max_results":1,
+                    "max_uses":2,
+                    "allowed_domains":["blog.rust-lang.org"],
+                    "user_location":{"country":"CN","timezone":"Asia/Shanghai"},
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let request_id = response
+            .headers()
+            .get("x-deepseek-lb-request-id")
+            .expect("the search response carries the query key")
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let body: Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(body["model"], "deepseek-flash");
+        assert_eq!(
+            body["queries"],
+            json!(["rust release"]),
+            "the envelope reports the queries the turn actually ran"
+        );
+        assert_eq!(body["truncated"], true);
+        assert_eq!(
+            body["sources"],
+            json!([{
+                "url": "https://example.com/one",
+                "title": "One",
+                "published_at": "2026-10-01",
+            }]),
+            "the envelope carries cited sources, never model prose"
+        );
+        assert_eq!(
+            body["usage"],
+            json!({"input_tokens": 12, "output_tokens": 40, "cached_tokens": 2})
+        );
+
+        let recorded = records.lock().unwrap().clone();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].path, "/anthropic/v1/messages");
+        assert_eq!(
+            recorded[0]
+                .headers
+                .get(header::AUTHORIZATION)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "Bearer sk-provider-ok"
+        );
+        let sent = serde_json::from_slice::<Value>(&recorded[0].body).unwrap();
+        assert_eq!(sent["model"], "deepseek-flash");
+        assert_eq!(
+            sent["tools"][0],
+            json!({
+                "type":"web_search_20250305",
+                "name":"web_search",
+                "max_uses":2,
+                "allowed_domains":["blog.rust-lang.org"],
+                "user_location":{"type":"approximate","country":"CN","timezone":"Asia/Shanghai"},
+            })
+        );
+        assert_eq!(
+            sent["messages"][0]["content"][0]["text"],
+            "Perform a web search for the query: rust 1.93"
+        );
+        assert!(
+            !String::from_utf8_lossy(&recorded[0].body).contains(CONSUMER_SECRET),
+            "the consumer credential never reaches DeepSeek"
+        );
+
+        let audits = wait_for_audits(&state, 1).await;
+        let audit = &audits[0];
+        assert_eq!(audit.get::<String, _>("request_id"), request_id);
+        assert_eq!(audit.get::<String, _>("path"), "/v1/web-search");
+        assert_eq!(audit.get::<String, _>("model"), "deepseek-flash");
+        assert_eq!(audit.get::<String, _>("provider_id"), "provider-1");
+        assert_eq!(audit.get::<i64, _>("status"), 200);
+        assert_eq!(audit.get::<i64, _>("input_tokens"), 12);
+        assert_eq!(audit.get::<i64, _>("output_tokens"), 40);
+        assert_eq!(audit.get::<i64, _>("cached_tokens"), 2);
+        assert!(
+            audit.get::<i64, _>("official_cost_usd_nanos") > 0,
+            "a search turn is priced like any other model turn"
+        );
+    }
+
+    #[tokio::test]
+    async fn web_search_rejects_a_missing_query_and_an_out_of_range_bound() {
+        let (upstream, records) = spawn_mock().await;
+        let state = crate::test_state(&upstream).await;
+        seed_consumer(&state, payments::USD_NANOS).await;
+        seed_provider(&state, "provider-1", "sk-provider-ok").await;
+
+        for (body, expected) in [
+            (json!({}), "query must be a non-empty string"),
+            (json!({"query":"   "}), "query must be a non-empty string"),
+            (
+                json!({"query":"rust","max_results":0}),
+                "max_results must be an integer between 1 and 50",
+            ),
+            (
+                json!({"query":"rust","max_results":"many"}),
+                "max_results must be an integer between 1 and 50",
+            ),
+            (
+                json!({"query":"rust","max_uses":9}),
+                "max_uses must be an integer between 1 and 5",
+            ),
+            (
+                json!({"query":"rust","blocked_domains":["example.com","bad domain"]}),
+                "blocked_domains must contain bare domain names like example.com",
+            ),
+            (
+                json!({"query":"rust","user_location":{"type":"exact"}}),
+                "user_location type must be approximate",
+            ),
+        ] {
+            let response = crate::router(state.clone())
+                .oneshot(proxy_request("/v1/web-search", body.clone()))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{body}");
+            let error: Value =
+                serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                    .unwrap();
+            assert_eq!(error["error"]["message"], expected);
+        }
+        assert!(
+            records.lock().unwrap().is_empty(),
+            "rejected searches never reach DeepSeek"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_search_turn_without_results_fails_loudly() {
+        let (upstream, _) = spawn_mock().await;
+        let state = crate::test_state(&upstream).await;
+        seed_consumer(&state, payments::USD_NANOS).await;
+        seed_provider(&state, "provider-1", "sk-provider-ok").await;
+
+        let response = crate::router(state.clone())
+            .oneshot(proxy_request(
+                "/v1/web-search",
+                json!({"query":"no results please"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let error: Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(error["error"]["reason"], "web_search_data_missing");
+        assert!(
+            error["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("after 0 server-side search(es)"),
+            "the failure explains what the search turn did"
+        );
+
+        let audits = wait_for_audits(&state, 1).await;
+        assert_eq!(audits[0].get::<i64, _>("status"), 502);
+        assert_eq!(
+            audits[0].get::<String, _>("error_code"),
+            "web_search_data_missing"
+        );
+    }
+
+    #[tokio::test]
+    async fn console_web_search_runs_under_the_hidden_console_consumer() {
+        let (upstream, _) = spawn_mock().await;
+        let state = crate::test_state(&upstream).await;
+        sqlx::query("INSERT INTO users(id,role,created_at,provided_usd_nanos) VALUES('user','user',0,0),('operator','user',0,?)")
+            .bind(payments::USD_NANOS)
+            .execute(&state.db)
+            .await
+            .unwrap();
+        seed_provider(&state, "provider-1", "sk-provider-ok").await;
+
+        let run = |query: &str| {
+            super::handle_console_web_search(
+                State(state.clone()),
+                ConnectInfo(std::net::SocketAddr::from(([127, 0, 0, 1], 40_000))),
+                Extension(UserIdentity {
+                    id: "operator".to_owned(),
+                    email: None,
+                    name: None,
+                    role: "user".to_owned(),
+                }),
+                HeaderMap::new(),
+                Bytes::from(serde_json::to_vec(&json!({"query":query})).unwrap()),
+            )
+        };
+
+        let response = run("rust 1.93").await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(body["sources"].as_array().unwrap().len(), 2);
+
+        let audits = wait_for_audits(&state, 1).await;
+        let consumer_id = audits[0].get::<String, _>("consumer_id");
+        assert!(consumer_id.starts_with("console-"));
+        let (name, is_system, archived): (String, i64, i64) =
+            sqlx::query_as("SELECT name,is_system,request_archive FROM consumers WHERE id=?")
+                .bind(&consumer_id)
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        assert_eq!(name, "DeepSeek-LB Console");
+        assert_eq!(
+            is_system, 1,
+            "the console consumer never appears as a user key"
+        );
+        assert_eq!(archived, 1, "console searches keep their diagnostics");
+        assert_eq!(audits[0].get::<String, _>("user_id"), "operator");
+
+        // The console consumer is created once and reused.
+        assert_eq!(run("rust 1.94").await.unwrap().status(), StatusCode::OK);
+        let consumers: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM consumers WHERE user_id='operator'")
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        assert_eq!(consumers, 1);
     }
 
     #[tokio::test]
