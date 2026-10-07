@@ -11,6 +11,7 @@ test("console delegates Linkit identity UI to the published components", async (
   ) as { dependencies: Record<string, string> }
 
   assert.equal(manifest.dependencies["linkit-react-components"], "0.6.0")
+  assert.equal(manifest.dependencies["@zccz14/ux"], "0.1.4")
   assert.equal(manifest.dependencies["next-themes"], undefined)
   assert.doesNotMatch(main, /theme-provider/)
   assert.match(indexHtml, /localStorage\.getItem\("linkit\.theme"\)/)
@@ -21,7 +22,8 @@ test("console delegates Linkit identity UI to the published components", async (
   assert.match(app, /audiences=\{authMiniAudiences\(audience\.trim\(\)\)\}/)
   assert.match(app, /function authMiniAudiences[\s\S]{0,160}?linkit\.ntnl\.io/)
   assert.doesNotMatch(app, /audience=\{audience\.trim\(\)\}/)
-  assert.match(app, /<LinkitMyInfo \/>/)
+  assert.match(app, /import \{ AppLayout, type AppNavGroup \} from "@zccz14\/ux"/)
+  assert.doesNotMatch(app, /<LinkitMyInfo/)
   assert.match(app, /<LinkitLanguageSync setLocale=\{changeLocale\} \/>/)
   assert.match(app, /<LinkitUserInfo/)
   assert.match(app, /<LinkitUserPicker/)
