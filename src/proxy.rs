@@ -10,7 +10,7 @@ use axum::{
     body::{Body, Bytes},
     extract::{ConnectInfo, Extension, OriginalUri, Path, State},
     http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version, header},
-    response::Response,
+    response::{IntoResponse, Response},
 };
 use futures_util::StreamExt;
 use serde_json::{Value, json};
@@ -659,12 +659,25 @@ pub async fn handle_request_record(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<String>,
-) -> Result<Json<Value>, AppError> {
+) -> Result<Response, AppError> {
     api_identity(&state, &headers).await?;
-    let record = wait_for_request_record(&state, &id).await?.ok_or_else(|| {
-        AppError::not_found_with_reason("request record not found", "request_not_found")
-    })?;
-    Ok(Json(record))
+    let Some(record) = wait_for_request_record(&state, &id).await? else {
+        // The not-found answer doubles as this service's recognition probe:
+        // it names the load balancer so an upstream gateway can route web
+        // searches by source.
+        return Ok((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error":{
+                "message": "request record not found",
+                "type": "proxy_error",
+                "code": 404,
+                "reason": "request_not_found",
+                "lb": "deepseek",
+            }})),
+        )
+            .into_response());
+    };
+    Ok(Json(record).into_response())
 }
 
 #[derive(serde::Deserialize)]
@@ -2384,6 +2397,11 @@ mod tests {
             serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
                 .unwrap();
         assert_eq!(body["error"]["reason"].as_str(), Some("request_not_found"));
+        assert_eq!(
+            body["error"]["lb"].as_str(),
+            Some("deepseek"),
+            "the not-found answer names this load balancer for the gateway probe"
+        );
     }
 
     #[tokio::test]

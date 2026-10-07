@@ -107,7 +107,7 @@ curl https://deepseek.ntnl.io/v1/requests/query \
   -d '{"ids":["<REQUEST_ID_1>","<REQUEST_ID_2>"]}'
 ```
 
-金额为实收费用（USD 纳美元，1e-9 USD），恒等于审计账目；查询以 request-id 为凭据，任意有效 Consumer 均可调用，更适合下游异步批量回填。若调用方（如 NormAI）通过请求头 `x-normai-request-id` 提供统一请求 ID，本服务会优先采用它——响应头、费用查询与控制台“请求 ID”三处同值；缺失或非法时生成本服务自己的 UUID。字段、重试与回填示例见 [docs/request-cost-query.md](./docs/request-cost-query.md)。
+金额为实收费用（USD 纳美元，1e-9 USD），恒等于审计账目；查询以 request-id 为凭据，任意有效 Consumer 均可调用，更适合下游异步批量回填。若调用方（如 NormAI）通过请求头 `x-normai-request-id` 提供统一请求 ID，本服务会优先采用它——响应头、费用查询与控制台“请求 ID”三处同值；缺失或非法时生成本服务自己的 UUID。记录不存在时，404 应答在 `error.lb` 里注明本服务为 `deepseek`，供上游网关识别负载均衡器来源。字段、重试与回填示例见 [docs/request-cost-query.md](./docs/request-cost-query.md)。
 
 ### 亲和与线程
 

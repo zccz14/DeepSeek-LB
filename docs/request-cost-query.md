@@ -48,7 +48,10 @@ Authorization: Bearer <CONSUMER_KEY>
 
 The handler waits up to 2 seconds for a just-finished request to settle and
 persist before answering. If the record is still unavailable it returns HTTP
-404 with `reason: request_not_found`; a client that knows the request has just
+404 with `reason: request_not_found` and this service's own name in
+`error.lb` (`"deepseek"`): an upstream gateway probes this endpoint to
+recognise a load balancer and reads the field to learn which one it is, so
+web searches route by source. A client that knows the request has just
 finished may retry with backoff.
 
 ## Batch records
