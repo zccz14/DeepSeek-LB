@@ -10,7 +10,7 @@ test("console delegates Linkit identity UI to the published components", async (
     await readFile(new URL("../package.json", import.meta.url), "utf8")
   ) as { dependencies: Record<string, string> }
 
-  assert.equal(manifest.dependencies["linkit-react-components"], "0.6.0")
+  assert.equal(manifest.dependencies["linkit-react-components"], "0.6.2")
   assert.equal(manifest.dependencies["@zccz14/ux"], "0.1.4")
   assert.equal(manifest.dependencies["next-themes"], undefined)
   assert.doesNotMatch(main, /theme-provider/)
