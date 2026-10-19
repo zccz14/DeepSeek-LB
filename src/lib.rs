@@ -162,10 +162,6 @@ pub fn router(state: AppState) -> Router {
             "/api/settings/provider-concurrency",
             patch(api::update_provider_concurrency),
         )
-        .route(
-            "/api/settings/web-search",
-            patch(api::update_web_search_model),
-        )
         .route("/api/users", get(api::list_users))
         .route("/api/users/{id}", patch(api::update_user))
         .route_layer(from_fn_with_state(state.clone(), auth::authenticate));
@@ -534,7 +530,6 @@ pub(crate) async fn test_state(upstream_base: &str) -> AppState {
         auth_audience: None,
         upstream_base: upstream_base.to_owned(),
         available_model_ids: config::default_available_model_ids(),
-        web_search_model: "deepseek-flash".to_owned(),
         allow_all_users_debt: false,
         response_body_limit: 1024 * 1024,
         affinity_ttl_seconds: 3600,
