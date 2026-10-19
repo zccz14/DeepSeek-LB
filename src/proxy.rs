@@ -50,8 +50,6 @@ const PROXY_ONLY_HEADERS: &[&str] = &["x-lb-affinity-key"];
 struct CallContext {
     model: Option<String>,
     stream: bool,
-    /// Source bound of a `/v1/web-search` envelope; `None` for inference calls.
-    max_results: Option<usize>,
 }
 
 struct RequestAuditContext {
@@ -93,18 +91,7 @@ impl Endpoint {
         match self {
             Self::ChatCompletions => "/chat/completions",
             Self::Responses => "/responses",
-            Self::WebSearch => web_search::MESSAGES_PATH,
-        }
-    }
-
-    /// Headers the upstream protocol requires beyond `Authorization`. The
-    /// Anthropic-compatible Messages endpoint agrees on a protocol version;
-    /// DeepSeek ignores the value, but the DSH search provider sends it and the
-    /// endpoint speaks a different protocol from the OpenAI-compatible pair.
-    fn protocol_headers(self) -> &'static [(&'static str, &'static str)] {
-        match self {
-            Self::ChatCompletions | Self::Responses => &[],
-            Self::WebSearch => &[("anthropic-version", web_search::ANTHROPIC_VERSION)],
+            Self::WebSearch => web_search::SEARCH_PATH,
         }
     }
 }
@@ -113,8 +100,6 @@ struct ProxyRequest {
     body: Bytes,
     model: Option<String>,
     stream: bool,
-    /// Source bound of a `/v1/web-search` envelope; `None` for inference calls.
-    max_results: Option<usize>,
 }
 
 struct AuditStart<'a> {
@@ -407,16 +392,14 @@ impl AuditTracker {
     fn finish(
         &mut self,
         status: StatusCode,
-        model: Option<&str>,
-        usage: Usage,
+        charge: Charge,
         error: Option<&str>,
     ) -> Option<AuditTransportId> {
         let mut event = self.event.take()?;
         settle(
             &mut event,
             status.as_u16() as i64,
-            model,
-            usage,
+            charge,
             error,
             self.started,
         );
@@ -432,10 +415,10 @@ impl AuditTracker {
         Some(transport)
     }
 
-    fn take_stream(&mut self, status: StatusCode, model: Option<&str>) -> StreamCompletion {
+    fn take_stream(&mut self, status: StatusCode, model: Option<String>) -> StreamCompletion {
         if let Some(event) = &mut self.event {
             event.status = status.as_u16() as i64;
-            event.model = model.map(str::to_owned);
+            event.model = model.or_else(|| event.model.take());
         }
         StreamCompletion::new(
             self.permit.take(),
@@ -453,8 +436,10 @@ impl Drop for AuditTracker {
             settle(
                 &mut event,
                 499,
-                None,
-                Usage::default(),
+                Charge::Tokens {
+                    model: None,
+                    usage: Usage::default(),
+                },
                 Some("client_cancelled"),
                 self.started,
             );
@@ -466,28 +451,44 @@ impl Drop for AuditTracker {
     }
 }
 
+/// What one request costs: a model turn priced by the published token rates
+/// (peak or off-peak by the clock), or a call priced by the endpoint itself.
+enum Charge {
+    Tokens {
+        model: Option<String>,
+        usage: Usage,
+    },
+    /// An official cost the caller already decided; no token rates apply.
+    Fixed(i64),
+}
+
 fn settle(
     event: &mut AuditEvent,
     status: i64,
-    model: Option<&str>,
-    usage: Usage,
+    charge: Charge,
     error: Option<&str>,
     started: Instant,
 ) {
     event.status = status;
-    event.model = model.map(str::to_owned).or_else(|| event.model.take());
     event.latency_ms = started.elapsed().as_millis().max(1) as i64;
-    event.input_tokens = usage.input_tokens;
-    event.output_tokens = usage.output_tokens;
-    event.cached_tokens = usage.cached_tokens;
     event.peak = pricing::is_peak(event.created_at);
-    event.official_cost_usd_nanos = model
-        .and_then(|model| pricing::official_cost_usd_nanos(model, usage, event.peak))
-        .unwrap_or_default();
-    event.actual_cost_usd_nanos = pricing::apply_price_multiplier(
-        event.official_cost_usd_nanos,
-        event.price_multiplier_nanos,
-    );
+    let official_cost_usd_nanos = match charge {
+        Charge::Tokens { model, usage } => {
+            event.model = model.or_else(|| event.model.take());
+            event.input_tokens = usage.input_tokens;
+            event.output_tokens = usage.output_tokens;
+            event.cached_tokens = usage.cached_tokens;
+            event
+                .model
+                .as_deref()
+                .and_then(|model| pricing::official_cost_usd_nanos(model, usage, event.peak))
+                .unwrap_or_default()
+        }
+        Charge::Fixed(nanos) => nanos,
+    };
+    event.official_cost_usd_nanos = official_cost_usd_nanos;
+    event.actual_cost_usd_nanos =
+        pricing::apply_price_multiplier(official_cost_usd_nanos, event.price_multiplier_nanos);
     if event.error.is_none() {
         event.error = error.map(str::to_owned);
     }
@@ -790,7 +791,6 @@ async fn dispatch(
         let context = CallContext {
             model: request.model.clone(),
             stream: request.stream,
-            max_results: request.max_results,
         };
         match endpoint {
             Endpoint::WebSearch => {
@@ -815,7 +815,7 @@ fn prepare_request(
         return Err(AppError::bad_request("JSON object required"));
     }
     if endpoint == Endpoint::WebSearch {
-        return prepare_web_search_request(&value, state);
+        return prepare_web_search_request(&value);
     }
     let model = value
         .get("model")
@@ -833,29 +833,23 @@ fn prepare_request(
         .get("stream")
         .and_then(Value::as_bool)
         .unwrap_or_default();
-    let _ = endpoint;
     Ok(ProxyRequest {
         body: serde_json::to_vec(&value)?.into(),
         model: Some(model),
         stream,
-        max_results: None,
     })
 }
 
-/// Translate one `/v1/web-search` body into the Anthropic-compatible Messages
-/// request that runs the search on the host model.
+/// Translate one `/v1/web-search` body into a DeepSeek Search API request.
 ///
-/// The endpoint takes a query and search controls, never a model:
-/// `web_search_model` is a deployment setting, so a caller cannot steer which
-/// model — and which price — serves the search turn.
-fn prepare_web_search_request(value: &Value, state: &AppState) -> Result<ProxyRequest, AppError> {
+/// The endpoint takes a query and search controls, never a model: the Search
+/// API runs no model at all, and prices the call, not the tokens.
+fn prepare_web_search_request(value: &Value) -> Result<ProxyRequest, AppError> {
     let search = web_search::search_request_from_json(value)?;
-    let model = state.config.load().web_search_model.clone();
     Ok(ProxyRequest {
-        body: serde_json::to_vec(&web_search::request_body(&model, &search))?.into(),
-        model: Some(model),
+        body: serde_json::to_vec(&web_search::request_body(&search))?.into(),
+        model: None,
         stream: false,
-        max_results: Some(search.options.max_results),
     })
 }
 
@@ -884,11 +878,14 @@ fn begin_request_audit(
     audit.set_request_size(body.len() as i64);
     let request_json = serde_json::from_slice::<Value>(body).ok();
     audit.set_reasoning_effort(request_json.as_ref().and_then(reasoning_effort).as_deref());
+    // INVARIANT: a search runs no model, but its audit row names the endpoint
+    // so operators can filter searches apart from model turns.
     audit.set_requested_model(
         request_json
             .as_ref()
             .and_then(|value| value.get("model"))
-            .and_then(Value::as_str),
+            .and_then(Value::as_str)
+            .or_else(|| matches!(endpoint, Endpoint::WebSearch).then_some(web_search::AUDIT_MODEL)),
     );
     audit
 }
@@ -909,8 +906,10 @@ fn finish_audit_error<T>(
         let audit_transport = audit
             .finish(
                 error.status(),
-                None,
-                Usage::default(),
+                Charge::Tokens {
+                    model: None,
+                    usage: Usage::default(),
+                },
                 Some(error.message()),
             )
             .expect("an active audit event always has a transport ID");
@@ -1050,9 +1049,6 @@ async fn send_upstream(
     request = request
         .header(header::AUTHORIZATION, format!("Bearer {}", lease.api_key))
         .header(header::CONTENT_TYPE, "application/json");
-    for (name, value) in endpoint.protocol_headers() {
-        request = request.header(*name, *value);
-    }
     let request = request.body(body).build()?;
     audit.set_upstream_request_headers(request.headers());
     Ok(state.client.execute(request).await?)
@@ -1140,8 +1136,10 @@ async fn relay_response(
         };
         let audit_id = audit.finish(
             status,
-            context.model.as_deref(),
-            usage,
+            Charge::Tokens {
+                model: context.model,
+                usage,
+            },
             error_from(status, &bytes).as_deref(),
         );
         let mut response = build_response(status, headers, Body::from(bytes))?;
@@ -1161,7 +1159,7 @@ async fn relay_response(
         request_id: event.request_id.clone(),
         diagnostics_enabled: event.request_archive,
     });
-    let completion = audit.take_stream(status, context.model.as_deref());
+    let completion = audit.take_stream(status, context.model);
     let UpstreamResponse::Live(upstream) = upstream else {
         unreachable!("only successful live upstream responses stream")
     };
@@ -1192,9 +1190,9 @@ async fn relay_response(
     Ok(response)
 }
 
-/// Answer a `/v1/web-search` call with its normalized sources and the token
-/// usage of the search turn. Failures keep the upstream status and body, which
-/// is where DeepSeek explains what went wrong with the turn.
+/// Answer a `/v1/web-search` call with the sources DeepSeek's search engine
+/// returned, and bill the call at the Search API's per-call price. Failures
+/// keep the upstream status and body, which is where DeepSeek explains itself.
 async fn web_search_response(
     state: &AppState,
     context: CallContext,
@@ -1210,31 +1208,24 @@ async fn web_search_response(
     audit.set_upstream_http_version(upstream.version());
     audit.set_response_headers(upstream.headers());
     let bytes = upstream.into_bytes().await?;
-    let turn = serde_json::from_slice::<Value>(&bytes).map_err(|_| {
+    let response = serde_json::from_slice::<Value>(&bytes).map_err(|_| {
         AppError::upstream(
             502,
             "Web search failed: the DeepSeek response body was not JSON.",
         )
     })?;
-    let (sources, truncated) = web_search::sources_from_response(
-        &turn,
-        context
-            .max_results
-            .unwrap_or(web_search::DEFAULT_MAX_RESULTS),
-    )?;
-    let usage = web_search::usage_from_response(&turn);
-    let model = context.model.as_deref();
+    let sources = web_search::sources_from_response(&response)?;
     let envelope = serde_json::to_vec(&json!({
         "created": chrono::Utc::now().timestamp(),
-        "model": model,
-        "queries": web_search::queries_from_response(&turn),
         "sources": sources,
-        "truncated": truncated,
-        "usage": usage,
     }))?;
     audit.set_response_size(envelope.len() as i64);
     audit.set_response_body(&envelope, false);
-    let audit_id = audit.finish(StatusCode::OK, model, usage, None);
+    let audit_id = audit.finish(
+        StatusCode::OK,
+        Charge::Fixed(pricing::SEARCH_CALL_USD_NANOS),
+        None,
+    );
     let mut response = build_response(
         StatusCode::OK,
         vec![(
@@ -1316,8 +1307,10 @@ impl StreamCompletion {
         settle(
             &mut event,
             status,
-            model.as_deref(),
-            self.sse.usage,
+            Charge::Tokens {
+                model,
+                usage: self.sse.usage,
+            },
             error,
             self.started,
         );
@@ -1338,8 +1331,10 @@ impl Drop for StreamCompletion {
             settle(
                 &mut event,
                 499,
-                model.as_deref(),
-                self.sse.usage,
+                Charge::Tokens {
+                    model,
+                    usage: self.sse.usage,
+                },
                 Some("client_cancelled"),
                 self.started,
             );
@@ -1645,14 +1640,8 @@ mod tests {
                 ))
                 .unwrap();
         }
-        if uri.path() == "/anthropic/v1/messages" {
-            assert_eq!(
-                headers
-                    .get("anthropic-version")
-                    .and_then(|value| value.to_str().ok()),
-                Some("2023-06-01")
-            );
-            return Json(anthropic_search_response(&body)).into_response();
+        if uri.path() == "/v1/tools/search" {
+            return Json(search_response(&body)).into_response();
         }
         let payload = serde_json::from_slice::<Value>(&body).unwrap_or(Value::Null);
         let stream = payload
@@ -1707,55 +1696,36 @@ mod tests {
         }
     }
 
-    /// One Anthropic-compatible Messages turn: a server-side search use, its
-    /// structured results, and the model prose that cites one of them.
-    fn anthropic_search_response(request: &Bytes) -> Value {
+    /// One Search API response: two ranked results, or none for a query that
+    /// asks for none.
+    fn search_response(request: &Bytes) -> Value {
         let request = serde_json::from_slice::<Value>(request).unwrap_or(Value::Null);
         let query = request
-            .pointer("/messages/0/content/0/text")
+            .get("query")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        assert!(
-            query.starts_with("Perform a web search for the query: "),
-            "the search turn carries the DeepSeek Harness instruction"
-        );
         if query.contains("no results") {
-            return json!({
-                "id": "msg-empty",
-                "model": "deepseek-flash",
-                "content": [{"type": "text", "text": "I already know the answer."}],
-                "stop_reason": "end_turn",
-                "usage": {"input_tokens": 9, "output_tokens": 12, "server_tool_use": {"web_search_requests": 0}},
-            });
+            return json!({"results": []});
         }
         json!({
-            "id": "msg-search",
-            "model": "deepseek-flash",
-            "content": [
-                {"type": "server_tool_use", "name": "web_search", "input": {"query": "rust release"}},
-                {"type": "server_tool_use", "name": "web_search", "input": {"query": "rust release"}},
+            "results": [
                 {
-                    "type": "web_search_tool_result",
-                    "tool_use_id": "srvtoolu_1",
-                    "content": [
-                        {"type": "web_search_result", "url": "https://example.com/one", "title": "One", "page_age": "2026-10-01"},
-                        {"type": "web_search_result", "url": "https://example.com/two", "title": "Two"},
-                    ],
+                    "rerank_score": 2.4,
+                    "title": "One",
+                    "url": "https://example.com/one",
+                    "snippet": "short one",
+                    "summary": "longer one",
+                    "content": "",
+                    "site_name": "Example",
+                    "date": "2026-10-01T00:00:00+00:00",
+                    "authority": 3,
                 },
                 {
-                    "type": "text",
-                    "text": "Rust 1.93 is out.",
-                    "citations": [{"type": "web_search_result_location", "url": "https://example.com/two", "cited_text": "two excerpt"}],
+                    "title": "Two",
+                    "url": "https://example.com/two",
+                    "snippet": "short two",
                 },
             ],
-            "stop_reason": "end_turn",
-            "usage": {
-                "input_tokens": 9,
-                "output_tokens": 40,
-                "cache_read_input_tokens": 2,
-                "cache_creation_input_tokens": 1,
-                "server_tool_use": {"web_search_requests": 1},
-            },
         })
     }
 
@@ -1766,7 +1736,7 @@ mod tests {
         };
         let app = Router::new()
             .route("/chat/completions", post(mock_upstream))
-            .route("/anthropic/v1/messages", post(mock_upstream))
+            .route("/v1/tools/search", post(mock_upstream))
             .route("/responses", post(mock_upstream))
             .route("/user/balance", get(mock_upstream))
             .with_state(mock);
@@ -1897,7 +1867,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn web_search_returns_normalized_sources_and_bills_the_search_turn() {
+    async fn web_search_returns_the_ranked_results_and_bills_one_call() {
         let (upstream, records) = spawn_mock().await;
         let state = crate::test_state(&upstream).await;
         seed_consumer(&state, payments::USD_NANOS).await;
@@ -1907,11 +1877,10 @@ mod tests {
             .oneshot(proxy_request(
                 "/v1/web-search",
                 json!({
-                    "query":"rust 1.93",
-                    "max_results":1,
-                    "max_uses":2,
+                    "query":" rust 1.93 ",
+                    "max_results":2,
+                    "need_content":true,
                     "allowed_domains":["blog.rust-lang.org"],
-                    "user_location":{"country":"CN","timezone":"Asia/Shanghai"},
                 }),
             ))
             .await
@@ -1927,30 +1896,43 @@ mod tests {
         let body: Value =
             serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
                 .unwrap();
-        assert_eq!(body["model"], "deepseek-flash");
-        assert_eq!(
-            body["queries"],
-            json!(["rust release"]),
-            "the envelope reports the queries the turn actually ran"
-        );
-        assert_eq!(body["truncated"], true);
         assert_eq!(
             body["sources"],
-            json!([{
-                "url": "https://example.com/one",
-                "title": "One",
-                "published_at": "2026-10-01",
-            }]),
-            "the envelope carries cited sources, never model prose"
+            json!([
+                {
+                    "url": "https://example.com/one",
+                    "title": "One",
+                    "snippet": "short one",
+                    "summary": "longer one",
+                    "published_at": "2026-10-01T00:00:00+00:00",
+                    "site_name": "Example",
+                    "authority": 3,
+                    "rerank_score": 2.4,
+                },
+                {
+                    "url": "https://example.com/two",
+                    "title": "Two",
+                    "snippet": "short two",
+                },
+            ]),
+            "the envelope carries the results DeepSeek ranked, and nothing else"
         );
+        let mut keys = body
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        keys.sort();
         assert_eq!(
-            body["usage"],
-            json!({"input_tokens": 12, "output_tokens": 40, "cached_tokens": 2})
+            keys,
+            vec!["created".to_owned(), "sources".to_owned()],
+            "no host model, no turn usage, no post-hoc truncation"
         );
 
         let recorded = records.lock().unwrap().clone();
         assert_eq!(recorded.len(), 1);
-        assert_eq!(recorded[0].path, "/anthropic/v1/messages");
+        assert_eq!(recorded[0].path, "/v1/tools/search");
         assert_eq!(
             recorded[0]
                 .headers
@@ -1960,21 +1942,14 @@ mod tests {
                 .unwrap(),
             "Bearer sk-provider-ok"
         );
-        let sent = serde_json::from_slice::<Value>(&recorded[0].body).unwrap();
-        assert_eq!(sent["model"], "deepseek-flash");
         assert_eq!(
-            sent["tools"][0],
+            serde_json::from_slice::<Value>(&recorded[0].body).unwrap(),
             json!({
-                "type":"web_search_20250305",
-                "name":"web_search",
-                "max_uses":2,
-                "allowed_domains":["blog.rust-lang.org"],
-                "user_location":{"type":"approximate","country":"CN","timezone":"Asia/Shanghai"},
-            })
-        );
-        assert_eq!(
-            sent["messages"][0]["content"][0]["text"],
-            "Perform a web search for the query: rust 1.93"
+                "query": "rust 1.93 site:blog.rust-lang.org",
+                "count": 2,
+                "need_content": true,
+            }),
+            "domain filters become search operators and the bound is the count"
         );
         assert!(
             !String::from_utf8_lossy(&recorded[0].body).contains(CONSUMER_SECRET),
@@ -1985,15 +1960,26 @@ mod tests {
         let audit = &audits[0];
         assert_eq!(audit.get::<String, _>("request_id"), request_id);
         assert_eq!(audit.get::<String, _>("path"), "/v1/web-search");
-        assert_eq!(audit.get::<String, _>("model"), "deepseek-flash");
+        assert_eq!(
+            audit.get::<String, _>("model"),
+            "deepseek-search",
+            "the audit row names the endpoint, since no model served it"
+        );
         assert_eq!(audit.get::<String, _>("provider_id"), "provider-1");
         assert_eq!(audit.get::<i64, _>("status"), 200);
-        assert_eq!(audit.get::<i64, _>("input_tokens"), 12);
-        assert_eq!(audit.get::<i64, _>("output_tokens"), 40);
-        assert_eq!(audit.get::<i64, _>("cached_tokens"), 2);
-        assert!(
-            audit.get::<i64, _>("official_cost_usd_nanos") > 0,
-            "a search turn is priced like any other model turn"
+        assert_eq!(
+            audit.get::<i64, _>("input_tokens") + audit.get::<i64, _>("output_tokens"),
+            0,
+            "a search burns no tokens"
+        );
+        assert_eq!(
+            audit.get::<i64, _>("official_cost_usd_nanos"),
+            pricing::SEARCH_CALL_USD_NANOS
+        );
+        assert_eq!(
+            audit.get::<i64, _>("actual_cost_usd_nanos"),
+            pricing::SEARCH_CALL_USD_NANOS,
+            "the default multiplier charges the list price"
         );
     }
 
@@ -2016,16 +2002,16 @@ mod tests {
                 "max_results must be an integer between 1 and 50",
             ),
             (
-                json!({"query":"rust","max_uses":9}),
-                "max_uses must be an integer between 1 and 5",
+                json!({"query":"rust","need_content":"yes"}),
+                "need_content must be a boolean",
             ),
             (
                 json!({"query":"rust","blocked_domains":["example.com","bad domain"]}),
                 "blocked_domains must contain bare domain names like example.com",
             ),
             (
-                json!({"query":"rust","user_location":{"type":"exact"}}),
-                "user_location type must be approximate",
+                json!({"query":"rust","allowed_domains":["example.com"],"blocked_domains":["example.org"]}),
+                "allowed_domains and blocked_domains cannot be combined",
             ),
         ] {
             let response = crate::router(state.clone())
@@ -2067,8 +2053,8 @@ mod tests {
             error["error"]["message"]
                 .as_str()
                 .unwrap()
-                .contains("after 0 server-side search(es)"),
-            "the failure explains what the search turn did"
+                .contains("DeepSeek returned no results"),
+            "the failure explains that the search found nothing"
         );
 
         let audits = wait_for_audits(&state, 1).await;

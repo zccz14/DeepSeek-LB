@@ -21,7 +21,7 @@ test("puts the web search tool in its own navigation group and route", () => {
   assert.match(app, /pageWebSearch:/)
 })
 
-test("runs console searches with the native search controls", () => {
+test("runs console searches with the search API controls", () => {
   const page = app.slice(
     app.indexOf("function WebSearchPage"),
     app.indexOf("function Dashboard")
@@ -30,32 +30,30 @@ test("runs console searches with the native search controls", () => {
   assert.match(page, /api<WebSearchEnvelope>\(sdk, "\/api\/web-search"/)
   assert.match(page, /webSearchRequestBody\(/)
   assert.match(page, /parseWebSearchBound\(maxResults, webSearchMaxResultsLimit\)/)
-  assert.match(page, /parseWebSearchBound\(maxUses, webSearchMaxUsesLimit\)/)
   assert.match(page, /domainsConflict/)
-  assert.match(page, /result\.queries\.map/)
-  assert.match(page, /result\.truncated &&/)
-  assert.match(page, /result\.usage\.input_tokens/)
-  assert.match(page, /result\.usage\.cached_tokens/)
+  assert.match(page, /needContent/)
+  assert.match(page, /result\.sources\.map/)
+  assert.match(page, /source\.summary/)
   assert.match(page, /source\.published_at/)
   assert.match(page, /source\.snippet/)
   assert.match(page, /t\.webSearchAuditLink/)
   assert.match(page, /t\.webSearching/)
+  assert.doesNotMatch(
+    page,
+    /max_uses|user_location|result\.usage|result\.queries|result\.truncated/
+  )
 })
 
-test("keeps the search host model on the administrator settings", () => {
-  const settings = app.slice(
-    app.indexOf("function WebSearchSettings"),
-    app.indexOf("function ProviderConcurrencySettings")
+test("the console envelope carries sources only", () => {
+  const envelope = app.slice(
+    app.indexOf("type WebSearchEnvelope = {"),
+    app.indexOf("const webSearchAuditModel")
   )
 
-  assert.match(settings, /api\(sdk, "\/api\/settings\/web-search"/)
-  assert.match(settings, /web_search_model: model/)
-  assert.match(settings, /\/anthropic\/v1\/messages/)
+  assert.match(envelope, /sources: WebSearchSource\[\]/)
+  assert.doesNotMatch(envelope, /queries|truncated|usage/)
+})
 
-  const settingsPage = app.slice(
-    app.indexOf("function SettingsPage"),
-    app.indexOf("function WebSearchSettings")
-  )
-  assert.match(settingsPage, /initial=\{data\.web_search_model\}/)
-  assert.match(settingsPage, /upstreamBase=\{data\.upstream_base\}/)
+test("no admin setting claims a search model", () => {
+  assert.doesNotMatch(app, /web_search_model|settings\/web-search/)
 })

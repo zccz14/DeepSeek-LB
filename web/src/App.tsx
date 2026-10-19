@@ -127,7 +127,6 @@ import {
   FieldError,
   FieldGroup,
   FieldLabel,
-  FieldLegend,
   FieldSet,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
@@ -189,11 +188,8 @@ import {
   parseWebSearchBound,
   parseWebSearchDomains,
   webSearchDefaultMaxResults,
-  webSearchDefaultMaxUses,
   webSearchMaxResultsLimit,
-  webSearchMaxUsesLimit,
   webSearchRequestBody,
-  type WebSearchLocation,
 } from "@/lib/web-search"
 
 type Page =
@@ -490,7 +486,6 @@ type SettingsData = {
   auth_audience?: string
   upstream_base: string
   available_model_ids: string[]
-  web_search_model: string
   allow_all_users_debt: boolean
   response_body_limit: number
   affinity_ttl_seconds: number
@@ -593,52 +588,32 @@ const copy = {
     pageSettings: "确认身份边界、上游与部署限制。",
     webSearchQuery: "搜索查询",
     webSearchQueryPlaceholder: "例如：DeepSeek V4 发布日期",
-    webSearchModel: "搜索模型",
-    webSearchMaxResults: "来源上限",
+    webSearchMaxResults: "返回条数",
     webSearchMaxResultsHelp:
-      "1 到 50 之间的整数。DeepSeek 没有结果数量参数，超出上限的来源会在返回时按 URL 去重后截断。",
+      "1 到 50 之间的整数，作为 DeepSeek 搜索接口的 count 直接下发；条数不影响单次价格。",
     webSearchMaxResultsInvalid: "请输入 1 到 50 之间的整数。",
-    webSearchMaxUses: "搜索次数上限",
-    webSearchMaxUsesHelp:
-      "1 到 5 之间的整数，即这一轮里 DeepSeek 最多执行多少次服务端搜索；次数越多，推理 Token 与费用越高。",
-    webSearchMaxUsesInvalid: "请输入 1 到 5 之间的整数。",
+    webSearchNeedContent: "返回网页正文",
+    webSearchNeedContentHelp:
+      "开启后每条结果都会带上网页正文（content），不额外收费。",
     webSearchAllowedDomains: "仅限这些域名",
     webSearchBlockedDomains: "排除这些域名",
     webSearchDomainsPlaceholder: "example.com, deepseek.com",
     webSearchDomainsHelp:
-      "逗号或空白分隔的裸域名，子域名自动包含；两种过滤方式只能用一种。",
+      "逗号或空白分隔的裸域名，子域名自动包含；两种过滤方式只能用一种，下发时翻译成搜索语法 site: / -site:。",
     webSearchDomainsConflict: "仅限域名与排除域名不能同时使用。",
-    webSearchLocation: "定位用户位置",
-    webSearchLocationHelp:
-      "可选，用近似位置帮助搜索返回本地相关结果；留空则不下发位置。",
-    webSearchLocationCountry: "国家",
-    webSearchLocationRegion: "地区",
-    webSearchLocationCity: "城市",
-    webSearchLocationTimezone: "时区",
     webSearchRun: "开始搜索",
     webSearching: "正在搜索",
     webSearchResultsTitle: "搜索结果",
-    webSearchResultsDescription: "搜索结果按 URL 去重，附标题、时效与引用摘录。",
-    webSearchEmpty: "执行搜索后，搜索词与来源会显示在这里。",
+    webSearchResultsDescription:
+      "结果由 DeepSeek 自研搜索引擎排序，附摘要、站点、时效与权威度。",
+    webSearchEmpty: "执行搜索后，来源会显示在这里。",
     webSearchFailed: "联网搜索失败",
-    webSearchQueries: "搜索词",
     webSearchSources: "来源",
-    webSearchTruncated: "已按上限截断",
-    webSearchUsage: "本次用量",
-    webSearchInputTokens: "输入 Token",
-    webSearchOutputTokens: "输出 Token",
-    webSearchCachedTokens: "缓存 Token",
+    webSearchAuthority: "权威度",
+    webSearchContent: "正文字符",
     webSearchCostNote:
-      "每次搜索以一次模型轮次计费，费用与用量记入推理审计，可用模型筛选项按搜索模型回看。",
-    webSearchAuditLink: "在推理审计中查看该模型的调用",
-    webSearchSettingsTitle: "联网搜索",
-    webSearchSettingsDescription:
-      "宿主模型执行每次搜索的完整轮次，因此选择哪个模型决定了搜索费用。",
-    webSearchModelLabel: "搜索模型",
-    webSearchModelHelp:
-      "使用 DeepSeek Anthropic 兼容接口的模型名，例如 deepseek-flash；搜索请求发往上游基址下的 /anthropic/v1/messages。",
-    webSearchModelInvalid: "搜索模型需为 1-200 个字符。",
-    webSearchEndpoint: "搜索端点",
+      "每次搜索按次计费（DeepSeek 价目：¥5 / 1000 次，无结果不计费），不产生 Token；费用与用量记入推理审计。",
+    webSearchAuditLink: "在推理审计中查看联网搜索调用",
     accountOverview: "本账户运行概要",
     accountOverviewDescription: "当前账户的运行状态、调用与 Token 用量。",
     tokenUsage24h: "24 小时 Token 用量",
@@ -1147,53 +1122,33 @@ const copy = {
       "Confirm identity boundaries, upstream, and deployment limits.",
     webSearchQuery: "Search query",
     webSearchQueryPlaceholder: "Latest DeepSeek release",
-    webSearchModel: "Search model",
-    webSearchMaxResults: "Source bound",
+    webSearchMaxResults: "Results",
     webSearchMaxResultsHelp:
-      "An integer from 1 to 50. DeepSeek exposes no result-count argument, so over-returned sources are deduplicated by URL and truncated on the way back.",
+      "An integer from 1 to 50, sent to DeepSeek's search endpoint as its count; the count does not change the per-call price.",
     webSearchMaxResultsInvalid: "Enter an integer from 1 to 50.",
-    webSearchMaxUses: "Search uses",
-    webSearchMaxUsesHelp:
-      "An integer from 1 to 5: how many server-side searches this turn may run. More searches cost more reasoning tokens.",
-    webSearchMaxUsesInvalid: "Enter an integer from 1 to 5.",
+    webSearchNeedContent: "Return page content",
+    webSearchNeedContentHelp:
+      "Each result then carries the page body in content, at no extra cost.",
     webSearchAllowedDomains: "Only these domains",
     webSearchBlockedDomains: "Exclude these domains",
     webSearchDomainsPlaceholder: "example.com, deepseek.com",
     webSearchDomainsHelp:
-      "Bare domain names separated by commas or whitespace; subdomains are included. Only one of the two filters may be used.",
-    webSearchDomainsConflict: "Only-domains and excluded-domains cannot be combined.",
-    webSearchLocation: "Approximate user location",
-    webSearchLocationHelp:
-      "Optional location that helps the search return locally relevant results; empty fields are not sent.",
-    webSearchLocationCountry: "Country",
-    webSearchLocationRegion: "Region",
-    webSearchLocationCity: "City",
-    webSearchLocationTimezone: "Timezone",
+      "Bare domain names separated by commas or whitespace; subdomains are included. Only one of the two filters may be used, and they are sent as the site: / -site: search operators.",
+    webSearchDomainsConflict:
+      "Only-domains and excluded-domains cannot be combined.",
     webSearchRun: "Search",
     webSearching: "Searching",
     webSearchResultsTitle: "Search results",
     webSearchResultsDescription:
-      "Results deduplicated by URL, with title, recency, and citation excerpts.",
-    webSearchEmpty: "Run a search and its queries and sources appear here.",
+      "Results ranked by DeepSeek's own search engine, with summaries, site, recency, and authority.",
+    webSearchEmpty: "Run a search and its sources appear here.",
     webSearchFailed: "Web search failed",
-    webSearchQueries: "Searched queries",
     webSearchSources: "Sources",
-    webSearchTruncated: "Truncated to the bound",
-    webSearchUsage: "This call",
-    webSearchInputTokens: "Input tokens",
-    webSearchOutputTokens: "Output tokens",
-    webSearchCachedTokens: "Cached tokens",
+    webSearchAuthority: "Authority",
+    webSearchContent: "Content chars",
     webSearchCostNote:
-      "A search is billed as one model turn; cost and usage land in the inference audit, filterable by the search model.",
-    webSearchAuditLink: "Review this model's calls in the inference audit",
-    webSearchSettingsTitle: "Web search",
-    webSearchSettingsDescription:
-      "The host model runs each search turn, so the model choice sets what a search costs.",
-    webSearchModelLabel: "Search model",
-    webSearchModelHelp:
-      "A model name from DeepSeek's Anthropic-compatible API, such as deepseek-flash; search requests go to /anthropic/v1/messages under the upstream base.",
-    webSearchModelInvalid: "The search model must be 1-200 characters.",
-    webSearchEndpoint: "Search endpoint",
+      "Each search is billed per call (DeepSeek list price: CNY 5 per 1,000, free when nothing was found) and burns no tokens; cost and usage land in the inference audit.",
+    webSearchAuditLink: "Review web search calls in the inference audit",
     accountOverview: "Account operating summary",
     accountOverviewDescription:
       "Current account status, calls, and Token usage.",
@@ -3386,57 +3341,47 @@ type WebSearchSource = {
   url: string
   title?: string
   snippet?: string
+  summary?: string
+  content?: string
   published_at?: string
+  site_name?: string
+  authority?: number
+  rerank_score?: number
 }
 type WebSearchEnvelope = {
   created: number
-  model?: string
-  queries: string[]
   sources: WebSearchSource[]
-  truncated: boolean
-  usage: { input_tokens: number; output_tokens: number; cached_tokens: number }
 }
+
+/** The audit row's model label for searches; see the backend `web_search` module. */
+const webSearchAuditModel = "deepseek-search"
 
 /**
  * Runs the same search `/v1/web-search` runs, so an operator can verify the
- * host model, the search controls, and the upstream endpoint without a
- * Consumer credential; the call is audited and billed to the signed-in user.
+ * search controls and the upstream endpoint without a Consumer credential; the
+ * call is audited and billed to the signed-in user.
  */
 function WebSearchPage({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
   const t = copy[locale]
-  const { data: settings } = useApiQuery<SettingsData>(sdk, "/api/settings")
   const [query, setQuery] = useState("")
   const [maxResults, setMaxResults] = useState(
     String(webSearchDefaultMaxResults)
   )
-  const [maxUses, setMaxUses] = useState(String(webSearchDefaultMaxUses))
+  const [needContent, setNeedContent] = useState(false)
   const [allowedDomains, setAllowedDomains] = useState("")
   const [blockedDomains, setBlockedDomains] = useState("")
-  const [location, setLocation] = useState<WebSearchLocation>({
-    country: "",
-    region: "",
-    city: "",
-    timezone: "",
-  })
   const [result, setResult] = useState<WebSearchEnvelope | null>(null)
   const [error, setError] = useState("")
   const [pending, setPending] = useState(false)
   const sourceBound = parseWebSearchBound(maxResults, webSearchMaxResultsLimit)
-  const searchUses = parseWebSearchBound(maxUses, webSearchMaxUsesLimit)
   const domainsConflict =
     parseWebSearchDomains(allowedDomains).length > 0 &&
     parseWebSearchDomains(blockedDomains).length > 0
-  const invalid =
-    sourceBound === undefined || searchUses === undefined || domainsConflict
-
-  function setLocationField(key: keyof WebSearchLocation, value: string) {
-    setLocation((current) => ({ ...current, [key]: value }))
-  }
+  const invalid = sourceBound === undefined || domainsConflict
 
   async function search() {
     if (pending || !query.trim()) return
-    if (sourceBound === undefined || searchUses === undefined) return
-    if (domainsConflict) return
+    if (sourceBound === undefined || domainsConflict) return
     setPending(true)
     try {
       setResult(
@@ -3446,10 +3391,9 @@ function WebSearchPage({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
             webSearchRequestBody(
               query,
               sourceBound,
-              searchUses,
+              needContent,
               allowedDomains,
-              blockedDomains,
-              location
+              blockedDomains
             )
           ),
         })
@@ -3468,14 +3412,7 @@ function WebSearchPage({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
       <Card>
         <CardHeader>
           <CardTitle>{t.webSearchQuery}</CardTitle>
-          <CardDescription className="flex flex-wrap items-center gap-2">
-            <span>{t.pageWebSearch}</span>
-            {settings && (
-              <Badge variant="secondary">
-                {t.webSearchModel}: <code>{settings.web_search_model}</code>
-              </Badge>
-            )}
-          </CardDescription>
+          <CardDescription>{t.pageWebSearch}</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-5">
           <Field data-disabled={pending}>
@@ -3518,128 +3455,54 @@ function WebSearchPage({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
                   : t.webSearchMaxResultsHelp}
               </FieldDescription>
             </Field>
-            <Field data-invalid={searchUses === undefined} data-disabled={pending}>
-              <FieldLabel htmlFor="web-search-max-uses">
-                {t.webSearchMaxUses}
+            <Field data-disabled={pending}>
+              <FieldLabel htmlFor="web-search-need-content">
+                {t.webSearchNeedContent}
               </FieldLabel>
-              <Input
-                id="web-search-max-uses"
-                type="number"
-                min={1}
-                max={webSearchMaxUsesLimit}
-                step={1}
-                value={maxUses}
-                onChange={(event) => setMaxUses(event.target.value)}
+              <Switch
+                id="web-search-need-content"
+                checked={needContent}
+                onCheckedChange={setNeedContent}
                 disabled={pending}
-                aria-invalid={searchUses === undefined}
-                aria-describedby="web-search-max-uses-help"
-                required
+                aria-describedby="web-search-need-content-help"
               />
-              <FieldDescription id="web-search-max-uses-help">
-                {searchUses === undefined
-                  ? t.webSearchMaxUsesInvalid
-                  : t.webSearchMaxUsesHelp}
+              <FieldDescription id="web-search-need-content-help">
+                {t.webSearchNeedContentHelp}
               </FieldDescription>
             </Field>
           </div>
-          <div className="grid gap-5 sm:grid-cols-2">
-            <Field data-invalid={domainsConflict} data-disabled={pending}>
-              <FieldLabel htmlFor="web-search-allowed-domains">
-                {t.webSearchAllowedDomains}
-              </FieldLabel>
-              <Textarea
-                id="web-search-allowed-domains"
-                className="min-h-20 resize-y leading-6"
-                placeholder={t.webSearchDomainsPlaceholder}
-                value={allowedDomains}
-                onChange={(event) => setAllowedDomains(event.target.value)}
-                disabled={pending}
-                aria-invalid={domainsConflict}
-                aria-describedby="web-search-domains-help"
-              />
-              <FieldDescription id="web-search-domains-help">
-                {domainsConflict
-                  ? t.webSearchDomainsConflict
-                  : t.webSearchDomainsHelp}
-              </FieldDescription>
-            </Field>
-            <Field data-invalid={domainsConflict} data-disabled={pending}>
-              <FieldLabel htmlFor="web-search-blocked-domains">
-                {t.webSearchBlockedDomains}
-              </FieldLabel>
-              <Textarea
-                id="web-search-blocked-domains"
-                className="min-h-20 resize-y leading-6"
-                placeholder={t.webSearchDomainsPlaceholder}
-                value={blockedDomains}
-                onChange={(event) => setBlockedDomains(event.target.value)}
-                disabled={pending}
-                aria-invalid={domainsConflict}
-                aria-describedby="web-search-domains-help"
-              />
-            </Field>
-          </div>
-          <FieldSet>
-            <FieldLegend variant="label">{t.webSearchLocation}</FieldLegend>
+          <FieldSet data-disabled={pending}>
             <div className="grid gap-5 sm:grid-cols-2">
-              <Field data-disabled={pending}>
-                <FieldLabel htmlFor="web-search-country">
-                  {t.webSearchLocationCountry}
+              <Field data-invalid={domainsConflict}>
+                <FieldLabel htmlFor="web-search-allowed-domains">
+                  {t.webSearchAllowedDomains}
                 </FieldLabel>
                 <Input
-                  id="web-search-country"
-                  placeholder="CN"
-                  value={location.country}
-                  onChange={(event) =>
-                    setLocationField("country", event.target.value)
-                  }
+                  id="web-search-allowed-domains"
+                  placeholder={t.webSearchDomainsPlaceholder}
+                  value={allowedDomains}
+                  onChange={(event) => setAllowedDomains(event.target.value)}
                   disabled={pending}
                 />
               </Field>
-              <Field data-disabled={pending}>
-                <FieldLabel htmlFor="web-search-region">
-                  {t.webSearchLocationRegion}
+              <Field data-invalid={domainsConflict}>
+                <FieldLabel htmlFor="web-search-blocked-domains">
+                  {t.webSearchBlockedDomains}
                 </FieldLabel>
                 <Input
-                  id="web-search-region"
-                  placeholder="Shanghai"
-                  value={location.region}
-                  onChange={(event) =>
-                    setLocationField("region", event.target.value)
-                  }
-                  disabled={pending}
-                />
-              </Field>
-              <Field data-disabled={pending}>
-                <FieldLabel htmlFor="web-search-city">
-                  {t.webSearchLocationCity}
-                </FieldLabel>
-                <Input
-                  id="web-search-city"
-                  placeholder="Shanghai"
-                  value={location.city}
-                  onChange={(event) =>
-                    setLocationField("city", event.target.value)
-                  }
-                  disabled={pending}
-                />
-              </Field>
-              <Field data-disabled={pending}>
-                <FieldLabel htmlFor="web-search-timezone">
-                  {t.webSearchLocationTimezone}
-                </FieldLabel>
-                <Input
-                  id="web-search-timezone"
-                  placeholder="Asia/Shanghai"
-                  value={location.timezone}
-                  onChange={(event) =>
-                    setLocationField("timezone", event.target.value)
-                  }
+                  id="web-search-blocked-domains"
+                  placeholder={t.webSearchDomainsPlaceholder}
+                  value={blockedDomains}
+                  onChange={(event) => setBlockedDomains(event.target.value)}
                   disabled={pending}
                 />
               </Field>
             </div>
-            <FieldDescription>{t.webSearchLocationHelp}</FieldDescription>
+            <FieldDescription>
+              {domainsConflict
+                ? t.webSearchDomainsConflict
+                : t.webSearchDomainsHelp}
+            </FieldDescription>
           </FieldSet>
         </CardContent>
         <CardContent className="border-t pt-5">
@@ -3670,34 +3533,9 @@ function WebSearchPage({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
             </Alert>
           ) : result ? (
             <>
-              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <Badge variant="secondary">
-                  {t.webSearchSources} {result.sources.length}
-                </Badge>
-                {result.truncated && (
-                  <Badge variant="outline">{t.webSearchTruncated}</Badge>
-                )}
-                <span>
-                  {t.webSearchUsage}: {t.webSearchInputTokens}{" "}
-                  {result.usage.input_tokens} · {t.webSearchOutputTokens}{" "}
-                  {result.usage.output_tokens} · {t.webSearchCachedTokens}{" "}
-                  {result.usage.cached_tokens}
-                </span>
-              </div>
-              {result.queries.length > 0 && (
-                <div className="grid gap-2">
-                  <div className="text-sm font-medium">
-                    {t.webSearchQueries}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {result.queries.map((item) => (
-                      <Badge key={item} variant="secondary">
-                        {item}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
+              <Badge variant="secondary">
+                {t.webSearchSources} {result.sources.length}
+              </Badge>
               <ul className="flex flex-col divide-y">
                 {result.sources.map((source) => (
                   <li
@@ -3715,26 +3553,36 @@ function WebSearchPage({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
                     </a>
                     <span className="truncate text-xs text-muted-foreground">
                       {source.url}
+                      {source.site_name ? ` · ${source.site_name}` : ""}
                       {source.published_at ? ` · ${source.published_at}` : ""}
+                      {source.authority !== undefined
+                        ? ` · ${t.webSearchAuthority} ${source.authority}`
+                        : ""}
                     </span>
                     {source.snippet && (
-                      <p className="text-sm text-muted-foreground text-pretty">
+                      <p className="text-sm text-muted-foreground">
                         {source.snippet}
                       </p>
+                    )}
+                    {source.summary && (
+                      <p className="text-sm text-pretty">{source.summary}</p>
+                    )}
+                    {source.content && (
+                      <Badge variant="outline">
+                        {t.webSearchContent} {source.content.length}
+                      </Badge>
                     )}
                   </li>
                 ))}
               </ul>
-              <p className="text-xs text-muted-foreground">
-                {t.webSearchCostNote}{" "}
-                {settings && (
-                  <Link
-                    className="underline underline-offset-4"
-                    to={`/audit?model=${encodeURIComponent(settings.web_search_model)}`}
-                  >
-                    {t.webSearchAuditLink}
-                  </Link>
-                )}
+              <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <span>{t.webSearchCostNote}</span>
+                <Link
+                  className="underline underline-offset-4"
+                  to={`/audit?model=${encodeURIComponent(webSearchAuditModel)}`}
+                >
+                  {t.webSearchAuditLink}
+                </Link>
               </p>
             </>
           ) : (
@@ -7308,12 +7156,6 @@ function SettingsPage({
       </Card>
       {(user.role === "root" || user.role === "admin") && (
         <>
-          <WebSearchSettings
-            sdk={sdk}
-            locale={locale}
-            initial={data.web_search_model}
-            upstreamBase={data.upstream_base}
-          />
           <ProviderConcurrencySettings
             sdk={sdk}
             locale={locale}
@@ -7333,85 +7175,6 @@ function SettingsPage({
         </>
       )}
     </div>
-  )
-}
-
-function WebSearchSettings({
-  sdk,
-  locale,
-  initial,
-  upstreamBase,
-}: {
-  sdk: AuthSdk
-  locale: Locale
-  initial: string
-  upstreamBase: string
-}) {
-  const t = copy[locale]
-  const queryClient = useQueryClient()
-  const [value, setValue] = useState(initial)
-  const [pending, setPending] = useState(false)
-  const model = value.trim()
-  const invalid = model.length === 0 || model.length > 200
-  useEffect(() => setValue(initial), [initial])
-
-  async function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (invalid || pending) return
-    setPending(true)
-    try {
-      await api(sdk, "/api/settings/web-search", {
-        method: "PATCH",
-        body: JSON.stringify({ web_search_model: model }),
-      })
-      await queryClient.invalidateQueries({ queryKey: ["/api/settings"] })
-      toast.success(t.settingsSaved)
-    } catch (cause) {
-      toast.error(message(cause, t))
-    } finally {
-      setPending(false)
-    }
-  }
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{t.webSearchSettingsTitle}</CardTitle>
-        <CardDescription>{t.webSearchSettingsDescription}</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        <Definition
-          rows={[
-            [t.webSearchEndpoint, `${upstreamBase}/anthropic/v1/messages`],
-          ]}
-        />
-        <form onSubmit={save}>
-          <FieldGroup>
-            <Field data-invalid={invalid} data-disabled={pending}>
-              <FieldLabel htmlFor="settings-web-search-model">
-                {t.webSearchModelLabel}
-              </FieldLabel>
-              <Input
-                id="settings-web-search-model"
-                value={value}
-                onChange={(event) => setValue(event.target.value)}
-                disabled={pending}
-                aria-invalid={invalid}
-                aria-describedby="settings-web-search-model-help"
-                required
-              />
-              <FieldDescription id="settings-web-search-model-help">
-                {invalid ? t.webSearchModelInvalid : t.webSearchModelHelp}
-              </FieldDescription>
-            </Field>
-            <Button type="submit" disabled={pending || invalid}>
-              {pending && <Spinner data-icon="inline-start" />}
-              {t.saveSettings}
-            </Button>
-          </FieldGroup>
-        </form>
-      </CardContent>
-    </Card>
   )
 }
 

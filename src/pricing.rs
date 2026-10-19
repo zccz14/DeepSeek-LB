@@ -192,6 +192,19 @@ pub fn official_cost_usd_nanos(model: &str, usage: Usage, peak: bool) -> Option<
     )
 }
 
+/// Official price of one Search API call, in USD nanodollars.
+///
+/// DeepSeek bills the Search API per successful call: CNY 5 per 1,000, no token
+/// and no peak/off-peak tariff, and nothing at all when the search failed or
+/// found no result.
+///
+/// ASSUMPTION: The invoice is in CNY while this ledger is USD, so the list price
+/// is converted once, at release time, at 6.6927 CNY/USD (2026-10-19):
+/// `0.005 CNY / 6.6927 = 747,083 USD nanos`. If the real rate moves, recorded
+/// cost drifts from the invoice by that few percent and stays inside the
+/// platform margin; the CNY list price remains the reference to re-derive from.
+pub const SEARCH_CALL_USD_NANOS: i64 = 747_083;
+
 /// Actual amount charged to the user: the official cost scaled by the platform
 /// price multiplier (a ratio in USD nanodollars, where [`USD_NANOS`] means 1x).
 pub fn apply_price_multiplier(official_cost_usd_nanos: i64, price_multiplier_nanos: i64) -> i64 {
@@ -365,6 +378,15 @@ mod tests {
         // A 2x multiplier charges double; USD_NANOS means exactly 1x.
         assert_eq!(apply_price_multiplier(11, 2 * USD_NANOS), 22);
         assert_eq!(apply_price_multiplier(11, USD_NANOS), 11);
+    }
+
+    #[test]
+    fn a_search_call_costs_the_published_cny_list_price() {
+        // CNY 5 per 1,000 calls at 6.6927 CNY/USD, rounded to the nano.
+        assert_eq!(
+            SEARCH_CALL_USD_NANOS,
+            (5_000_000_000_f64 / 1_000.0 / 6.6927).round() as i64
+        );
     }
 
     #[test]

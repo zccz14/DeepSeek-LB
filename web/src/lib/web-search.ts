@@ -1,22 +1,12 @@
 export const webSearchMaxResultsLimit = 50
-export const webSearchMaxUsesLimit = 5
 export const webSearchDefaultMaxResults = 8
-export const webSearchDefaultMaxUses = 5
-
-export type WebSearchLocation = {
-  country: string
-  region: string
-  city: string
-  timezone: string
-}
 
 export type WebSearchRequestBody = {
   query: string
   max_results: number
-  max_uses: number
+  need_content?: boolean
   allowed_domains?: string[]
   blocked_domains?: string[]
-  user_location?: Partial<WebSearchLocation>
 }
 
 /** A whole-number search control within `1..=maximum`, or `undefined`. */
@@ -37,26 +27,17 @@ export function parseWebSearchDomains(value: string): string[] {
 export function webSearchRequestBody(
   query: string,
   maxResults: number,
-  maxUses: number,
+  needContent: boolean,
   allowedDomains: string,
-  blockedDomains: string,
-  location: WebSearchLocation
+  blockedDomains: string
 ): WebSearchRequestBody {
   const allowed = parseWebSearchDomains(allowedDomains)
   const blocked = parseWebSearchDomains(blockedDomains)
-  const userLocation: Partial<WebSearchLocation> = {}
-  for (const key of ["country", "region", "city", "timezone"] as const) {
-    const value = location[key].trim()
-    if (value) userLocation[key] = value
-  }
   return {
     query: query.trim(),
     max_results: maxResults,
-    max_uses: maxUses,
+    ...(needContent ? { need_content: true } : {}),
     ...(allowed.length > 0 ? { allowed_domains: allowed } : {}),
     ...(blocked.length > 0 ? { blocked_domains: blocked } : {}),
-    ...(Object.keys(userLocation).length > 0
-      ? { user_location: userLocation }
-      : {}),
   }
 }

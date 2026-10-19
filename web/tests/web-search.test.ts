@@ -7,8 +7,6 @@ import {
   webSearchRequestBody,
 } from "../src/lib/web-search.ts"
 
-const emptyLocation = { country: "", region: "", city: "", timezone: "" }
-
 test("reads a search bound only when it is a whole number in range", () => {
   assert.equal(parseWebSearchBound("1", 50), 1)
   assert.equal(parseWebSearchBound("50", 50), 50)
@@ -29,37 +27,26 @@ test("splits domain filters on commas and whitespace", () => {
 })
 
 test("builds a request with only the required search controls", () => {
-  assert.deepEqual(
-    webSearchRequestBody("  rust release  ", 8, 5, "  ", "", emptyLocation),
-    { query: "rust release", max_results: 8, max_uses: 5 }
-  )
+  assert.deepEqual(webSearchRequestBody("  rust release  ", 8, false, "  ", ""), {
+    query: "rust release",
+    max_results: 8,
+  })
 })
 
-test("copies domain filters and trims location fields", () => {
+test("copies the content request and domain filters", () => {
   assert.deepEqual(
     webSearchRequestBody(
       "rust release",
       20,
-      2,
+      true,
       "rust-lang.org,blog.rust-lang.org",
-      "",
-      {
-        country: " CN ",
-        region: " Shanghai ",
-        city: "",
-        timezone: " Asia/Shanghai ",
-      }
+      ""
     ),
     {
       query: "rust release",
       max_results: 20,
-      max_uses: 2,
+      need_content: true,
       allowed_domains: ["rust-lang.org", "blog.rust-lang.org"],
-      user_location: {
-        country: "CN",
-        region: "Shanghai",
-        timezone: "Asia/Shanghai",
-      },
     }
   )
 })
