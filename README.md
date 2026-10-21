@@ -23,20 +23,20 @@ DeepSeek-LB 是 DeepSeek API 的反向代理与负载均衡器。它以单个 Ru
 
 ```bash
 cd web
-npm ci
-npm run build
+pnpm install --frozen-lockfile
+pnpm run build
 cd ..
 cargo run
 ```
 
-开发前端时运行 `npm run dev`；Vite 会把 API 请求代理到 `http://localhost:8080`。
+开发前端时运行 `pnpm run dev`；Vite 会把 API 请求代理到 `http://localhost:8080`。
 
 首次启动后打开 `http://localhost:8080`，用 Auth Mini 登录完成 root 绑定；随后在“上游提供商”里添加 DeepSeek API Key，在“下游消费者”里创建 Consumer，即可把 AI App 指向本服务。
 
 生产构建先生成一次 `web/dist`，Rust 只负责嵌入已有静态资源：
 
 ```bash
-cd web && npm ci && npm run check && cd ..
+cd web && pnpm install --frozen-lockfile && pnpm run check && cd ..
 cargo build --release --locked
 ```
 
@@ -139,7 +139,7 @@ curl https://deepseek.ntnl.io/v1/requests/query \
 ## 验证
 
 ```bash
-cd web && npm run check && cd ..
+cd web && pnpm run check && cd ..
 cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets --all-features --locked

@@ -1,6 +1,7 @@
 {
   "name": "web",
   "private": true,
+  "packageManager": "pnpm@10.15.0",
   "version": "0.0.1",
   "type": "module",
   "scripts": {
@@ -10,7 +11,7 @@
     "format": "prettier --write \"**/*.{ts,tsx}\"",
     "typecheck": "tsc -b --noEmit",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
-    "check": "npm run test && npm run typecheck && npm run lint && npm run build && node scripts/check-linkit-user-picker-styles.mjs && node scripts/check-portal-layering.mjs",
+    "check": "pnpm run test && pnpm run typecheck && pnpm run lint && pnpm run build && node scripts/check-linkit-user-picker-styles.mjs && node scripts/check-portal-layering.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
