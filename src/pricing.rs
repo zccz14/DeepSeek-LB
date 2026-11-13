@@ -205,6 +205,30 @@ pub fn official_cost_usd_nanos(model: &str, usage: Usage, peak: bool) -> Option<
 /// platform margin; the CNY list price remains the reference to re-derive from.
 pub const SEARCH_CALL_USD_NANOS: i64 = 747_083;
 
+/// Official DeepSeek price of one second of transcribed audio, in USD nanos.
+///
+/// Speech-to-text bills by audio duration rather than by token: USD 0.116 per
+/// hour of audio on the published list, rounded to the second (a fraction of a
+/// second counts as a full one), and nothing at all when the transcription
+/// failed. There is no peak/off-peak tariff.
+///
+/// The list price is what this ledger charges, for the same reason the Search
+/// API charges its list price: the invoice is the reference, and a limited-time
+/// discount must not turn into an under-funded ledger when it expires. DeepSeek
+/// currently sells at 50% of list (USD 0.058/hour, CNY 0.39/hour); until that
+/// discount ends the platform runs at the published margin, and after it the
+/// ledger lands exactly on cost.
+///
+/// `0.116 USD / 3600 s = 32,222.22 USD nanos`, rounded to the nano.
+pub const ASR_USD_NANOS_PER_SECOND: i64 = 32_222;
+
+/// Official DeepSeek cost of one transcription in USD nanodollars, from the
+/// audio duration the upstream reported.
+pub fn asr_cost_usd_nanos(duration_ms: i64) -> i64 {
+    let seconds = duration_ms.max(0).saturating_add(999) / 1_000;
+    seconds.saturating_mul(ASR_USD_NANOS_PER_SECOND)
+}
+
 /// Actual amount charged to the user: the official cost scaled by the platform
 /// price multiplier (a ratio in USD nanodollars, where [`USD_NANOS`] means 1x).
 pub fn apply_price_multiplier(official_cost_usd_nanos: i64, price_multiplier_nanos: i64) -> i64 {
@@ -212,6 +236,19 @@ pub fn apply_price_multiplier(official_cost_usd_nanos: i64, price_multiplier_nan
         * i128::from(price_multiplier_nanos.max(0))
         / i128::from(USD_NANOS);
     i64::try_from(actual_cost_usd_nanos).expect("configured price multiplier keeps costs in range")
+}
+
+/// The speech-to-text rate snapshot the console shows beside the token table.
+#[derive(Serialize)]
+pub struct AsrPrice {
+    /// The model name the transcription endpoint answers to.
+    pub model: &'static str,
+    /// The rate this ledger charges, in USD nanodollars per second of audio.
+    pub list_usd_nanos_per_second: i64,
+    /// What DeepSeek currently invoices: the limited-time 50% discount.
+    pub discounted_usd_nanos_per_second: i64,
+    /// Whether the limited-time discount is the rate DeepSeek invoices today.
+    pub discount_active: bool,
 }
 
 #[derive(Serialize)]
@@ -242,6 +279,16 @@ pub fn official_model_prices(available_model_ids: &[String]) -> Vec<ModelPrice> 
             off_peak: model_price_rates(pricing.off_peak),
         })
         .collect()
+}
+
+/// The speech-to-text rate snapshot.
+pub fn official_asr_price() -> AsrPrice {
+    AsrPrice {
+        model: crate::asr::AUDIT_MODEL,
+        list_usd_nanos_per_second: ASR_USD_NANOS_PER_SECOND,
+        discounted_usd_nanos_per_second: ASR_USD_NANOS_PER_SECOND / 2,
+        discount_active: true,
+    }
 }
 
 fn model_price_rates(rates: TokenRates) -> ModelPriceRates {
@@ -386,6 +433,32 @@ mod tests {
         assert_eq!(
             SEARCH_CALL_USD_NANOS,
             (5_000_000_000_f64 / 1_000.0 / 6.6927).round() as i64
+        );
+    }
+
+    #[test]
+    fn an_asr_call_costs_the_published_hour_rate_per_second() {
+        // USD 0.116 per hour of audio, rounded to the nano.
+        assert_eq!(
+            ASR_USD_NANOS_PER_SECOND,
+            (116_000_000_f64 / 3_600.0).round() as i64
+        );
+        // 3.2 s is billed as 4 s: a fraction of a second counts as a full one.
+        assert_eq!(asr_cost_usd_nanos(3_200), 4 * ASR_USD_NANOS_PER_SECOND);
+        // One minute of audio at the list price.
+        assert_eq!(asr_cost_usd_nanos(60_000), 60 * 32_222);
+        // A failed transcription that never reported a duration costs nothing.
+        assert_eq!(asr_cost_usd_nanos(0), 0);
+    }
+
+    #[test]
+    fn the_asr_price_snapshot_quotes_the_ledger_rate_and_the_discount() {
+        let price = official_asr_price();
+        assert_eq!(price.model, "deepseek-asr");
+        assert_eq!(price.list_usd_nanos_per_second, ASR_USD_NANOS_PER_SECOND);
+        assert_eq!(
+            price.discounted_usd_nanos_per_second,
+            ASR_USD_NANOS_PER_SECOND / 2
         );
     }
 

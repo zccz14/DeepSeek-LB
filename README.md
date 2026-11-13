@@ -2,7 +2,7 @@
 
 DeepSeek-LB 是 DeepSeek API 的反向代理与负载均衡器。它以单个 Rust 可执行文件交付，内嵌 React + shadcn 管理界面，并使用 SQLite 保存配置、权限、上游提供商、Consumer、用量和逐调用审计。
 
-服务只代理 DeepSeek，不兼容其他 AI 厂商协议：下游可使用 OpenAI 兼容的 `/v1/chat/completions`、`/v1/responses` 与 `/v1/models`（同时提供不带 `/v1` 前缀的别名），以及把 DeepSeek 原生联网搜索封装成独立接口的 `/v1/web-search`。
+服务只代理 DeepSeek，不兼容其他 AI 厂商协议：下游可使用 OpenAI 兼容的 `/v1/chat/completions`、`/v1/responses` 与 `/v1/models`（同时提供不带 `/v1` 前缀的别名），把 DeepSeek 原生联网搜索封装成独立接口的 `/v1/web-search`，以及把 DeepSeek 原生语音识别封装成 OpenAI 语音转写形状的 `/v1/audio/transcriptions`。
 
 ## 功能
 
@@ -11,8 +11,9 @@ DeepSeek-LB 是 DeepSeek API 的反向代理与负载均衡器。它以单个 Ru
 - Consumer 是下游 AI App 使用的凭据（`sk-*`，只在创建或轮换时展示一次）。
 - 逐调用审计：模型、Provider、Token 用量、缓存命中、峰谷时段、费用、首字节与总延迟、错误码，以及可选的请求/响应诊断正文。
 - 联网搜索：`/v1/web-search` 直接调用 DeepSeek 的 `/v1/tools/search`，不经模型、按次计费，返回 DeepSeek 排序的来源（摘要、时效、权威度，可选正文）；控制台也有同名工具页可直接试用。
+- 语音识别：`/v1/audio/transcriptions` 用 OpenAI 的 multipart 形状接收音频，转成 DeepSeek 的 `/v1/tools/asr` 单文件请求，按音频时长计费；上传的音频本身不进审计归档，只留容器类型与字节数。
 - 请求费用查询：下游记录响应头 `x-deepseek-lb-request-id` 后，可按单条或批量查询每次调用的实收金额与用量；支持上游网关（NormAI）通过 `x-normai-request-id` 传入统一请求 ID，跨上游的定价差异由各负载均衡器内部处理。
-- 费用核算使用 DeepSeek 官方价格：推理按 Token 计价并区分高峰（peak）与非高峰（off-peak）两档，中国法定节假日全天按非高峰计费；联网搜索按次计价，不分峰谷。
+- 费用核算使用 DeepSeek 官方价格：推理按 Token 计价并区分高峰（peak）与非高峰（off-peak）两档，中国法定节假日全天按非高峰计费；联网搜索按次计价，语音识别按音频秒数计价，两者都不分峰谷。
 - Midas 预付费：用户向 fund 账户充值后即可调用；未充值且未开启欠费的请求返回 HTTP 402。
 - Auth Mini 统一登录（Ed25519 JWT / JWKS），首个登录用户绑定为 root。
 - root/admin 视图包含仪表盘、上游、消费者、用量、审计、提供商审计、模型价格、系统资源、用户与设置；普通用户只看到自己的工作区。
@@ -91,6 +92,19 @@ curl https://deepseek.ntnl.io/v1/web-search \
 - `allowed_domains` 或 `blocked_domains`：裸域名数组，子域名自动包含；两者只能用其一，下发时翻译成搜索语法 `site:` / `-site:`。`query` 与操作符合计不得超过 128 个字符（DeepSeek 的上限），超出直接返回 400。
 
 响应只有两项：`created` 是生成时间，`sources` 保留 DeepSeek 的排序，每条的 `url` 必填，并可能带 `title`、`snippet`、`summary`、`content`、`published_at`、`site_name`、`authority`、`rerank_score`。搜索没有结果时以 HTTP 502 与 `web_search_data_missing` 失败，而不是返回空结果。控制台的“联网搜索”工具页调用同一能力（`POST /api/web-search`），使用登录用户的隐藏控制台 Consumer，同样写入审计并按该用户的余额计费。
+
+### 语音识别
+
+```bash
+curl https://deepseek.ntnl.io/v1/audio/transcriptions \
+  -H 'Authorization: Bearer <YOUR_CONSUMER_KEY>' \
+  -F file=@speech.wav \
+  -F model=deepseek-asr
+```
+
+`/v1/audio/transcriptions` 采用 OpenAI 的语音转写形状：音频放在 `multipart/form-data` 的 `file` 字段里，`model` 只用于标识与审计（DeepSeek 的语音识别只有一个固定模型，请求里不带模型字段）。服务把上传重建成只含 `file` 一个部件的请求，发往 `{upstream_base}/v1/tools/asr`；`language`、`prompt`、`response_format` 等其余字段不转发，因为 DeepSeek 不接受这些参数（语种自动识别）。响应原样透传 DeepSeek 的 JSON（`request_id`、`text`、`duration_ms`）。
+
+DeepSeek 只接收 16 位 PCM WAV 或 Ogg Opus、单次最大 8 MiB、最长 120 秒，且不支持流式识别。服务在发往上游之前就按内容判断容器与时长，不符合时直接返回 400 并说明可接受的格式与上限；转写失败的调用不计费。计费使用 DeepSeek 官方刊例价（每小时音频 0.116 美元，即每秒 `pricing::ASR_USD_NANOS_PER_SECOND`），按音频时长精确到秒、不足 1 秒按 1 秒计，再乘以价格倍率成为对该 Consumer 的实收金额。DeepSeek 目前按刊例价 5 折结算（每小时 0.058 美元），价目表仍按刊例价核算，控制台的“模型价格”页同时列出两者。
 
 ### 请求费用查询
 

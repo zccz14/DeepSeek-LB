@@ -19,7 +19,7 @@ use tokio::sync::OwnedSemaphorePermit;
 use uuid::Uuid;
 
 use crate::{
-    AppError, AppState,
+    AppError, AppState, asr,
     audit::{ARCHIVE_BODY_LIMIT, AuditEvent, AuditReservation},
     auth::{ApiIdentity, UserIdentity, api_identity},
     balancer::{Downstream, Lease, affinity_hash, track_response},
@@ -65,6 +65,7 @@ enum Endpoint {
     ChatCompletions,
     Responses,
     WebSearch,
+    Transcription,
 }
 
 impl Endpoint {
@@ -73,6 +74,7 @@ impl Endpoint {
             "/v1/chat/completions" | "/chat/completions" => Some(Self::ChatCompletions),
             "/v1/responses" | "/responses" => Some(Self::Responses),
             "/v1/web-search" | "/web-search" => Some(Self::WebSearch),
+            "/v1/audio/transcriptions" | "/audio/transcriptions" => Some(Self::Transcription),
             _ => None,
         }
     }
@@ -83,6 +85,7 @@ impl Endpoint {
             Self::ChatCompletions => "/v1/chat/completions",
             Self::Responses => "/v1/responses",
             Self::WebSearch => "/v1/web-search",
+            Self::Transcription => "/v1/audio/transcriptions",
         }
     }
 
@@ -92,6 +95,7 @@ impl Endpoint {
             Self::ChatCompletions => "/chat/completions",
             Self::Responses => "/responses",
             Self::WebSearch => web_search::SEARCH_PATH,
+            Self::Transcription => asr::ASR_PATH,
         }
     }
 }
@@ -100,6 +104,9 @@ struct ProxyRequest {
     body: Bytes,
     model: Option<String>,
     stream: bool,
+    /// The content type the upstream request presents; JSON for every model
+    /// turn, the multipart boundary of the rebuilt upload for a transcription.
+    content_type: String,
 }
 
 struct AuditStart<'a> {
@@ -512,6 +519,172 @@ pub async fn handle_json(
     dispatch(state, identity, audit, uri.path(), &headers, &body).await
 }
 
+/// `/v1/audio/transcriptions`: OpenAI's speech-to-text shape in, DeepSeek's
+/// `/v1/tools/asr` behind it.
+///
+/// The upload is read and validated here rather than forwarded blind: DeepSeek
+/// takes one `file` part of 16-bit PCM WAV or Ogg Opus, at most 8 MiB and two
+/// minutes long, and it bills the call by the seconds of audio it transcribed.
+/// Answering an unsupported container ourselves names the accepted formats,
+/// while DeepSeek's own 400 would only say the file is not acceptable.
+pub async fn handle_transcription(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    method: Method,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, AppError> {
+    let identity = api_identity(&state, &headers).await?;
+    let audit = RequestAuditContext {
+        request_id: unified_request_id(&headers),
+        thread_id: thread_id(&headers),
+        method,
+        client_ip: peer.ip().to_string(),
+    };
+    dispatch_transcription(state, identity, audit, &headers, body).await
+}
+
+/// One transcription call: read the upload, keep the caller's audio out of the
+/// audit archive, and bill the duration DeepSeek reports.
+async fn dispatch_transcription(
+    state: AppState,
+    identity: ApiIdentity,
+    audit_context: RequestAuditContext,
+    headers: &HeaderMap,
+    body: Bytes,
+) -> Result<Response, AppError> {
+    let affinity_key = affinity_key(headers);
+    let affinity = affinity_key
+        .as_ref()
+        .map(|key| format!("{}:{}", identity.consumer_id, key.value));
+    // INVARIANT: The audit row starts before validation so rejected uploads stay visible.
+    let mut audit = begin_transcription_audit(
+        &state,
+        &identity,
+        &audit_context,
+        headers,
+        body.len() as i64,
+    );
+    audit.set_affinity(
+        affinity.as_deref(),
+        affinity_key.as_ref().map(|key| key.source),
+    );
+    let result = async {
+        let content_type = header_value(headers, header::CONTENT_TYPE).ok_or_else(|| {
+            AppError::bad_request("multipart/form-data body with a boundary is required")
+        })?;
+        let (upload, model) = asr::read_upload(&content_type, body).await?;
+        audit.set_requested_model(Some(model.as_deref().unwrap_or(asr::AUDIT_MODEL)));
+        audit.set_request(headers, &transcription_archive(&upload), true);
+        ensure_request_quota(&state, &identity.user_id, identity.allow_debt).await?;
+        let boundary = format!("deepseek-lb-{}", Uuid::new_v4().simple());
+        let request = ProxyRequest {
+            body: asr::upstream_body(&upload, &boundary).into(),
+            model,
+            stream: false,
+            content_type: asr::upstream_content_type(&boundary),
+        };
+        let downstream = Downstream::new(&identity.user_id);
+        let (lease, upstream) = dispatch_to_provider(
+            &state,
+            Endpoint::Transcription,
+            headers,
+            &request,
+            affinity.as_deref(),
+            &mut audit,
+            downstream,
+        )
+        .await?;
+        transcription_response(&state, lease, upstream, &mut audit).await
+    }
+    .await;
+    finish_audit_error(&mut audit, result)
+}
+
+/// What the audit archive keeps of a transcription request: the shape of the
+/// upload, never the audio itself. A recording is private, and an archive row is
+/// a debugging aid, not a copy of the user's voice.
+fn transcription_archive(upload: &asr::AudioUpload) -> Vec<u8> {
+    serde_json::to_vec(&json!({
+        "multipart": "audio upload",
+        "container": match upload.container {
+            asr::Container::Wav => "wav",
+            asr::Container::OggOpus => "ogg-opus",
+        },
+        "audio_bytes": upload.bytes.len(),
+    }))
+    .unwrap_or_default()
+}
+
+fn begin_transcription_audit(
+    state: &AppState,
+    identity: &ApiIdentity,
+    context: &RequestAuditContext,
+    headers: &HeaderMap,
+    request_bytes: i64,
+) -> AuditTracker {
+    let mut audit = AuditTracker::begin(
+        state,
+        identity,
+        AuditStart {
+            audit_id: &context.request_id,
+            thread_id: context.thread_id.as_deref(),
+            method: &context.method,
+            path: Endpoint::Transcription.audit_path(),
+            client_ip: &context.client_ip,
+            response_body_limit: ARCHIVE_BODY_LIMIT,
+        },
+    );
+    // INVARIANT: the archive starts with the headers only; the audio summary
+    // replaces the empty body once the upload has been read.
+    audit.set_request(headers, b"", false);
+    audit.set_compression_headers(headers, None);
+    audit.set_request_size(request_bytes);
+    audit.set_requested_model(Some(asr::AUDIT_MODEL));
+    audit
+}
+
+/// Answer a transcription with what DeepSeek returned, billed by the audio
+/// duration it reported. A failed transcription costs nothing: DeepSeek
+/// invoices only the audio it actually transcribed.
+async fn transcription_response(
+    state: &AppState,
+    lease: Lease,
+    upstream: UpstreamResponse,
+    audit: &mut AuditTracker,
+) -> Result<Response, AppError> {
+    let _ = state;
+    audit.mark_first_byte();
+    let status = upstream.status();
+    audit.set_upstream_http_version(upstream.version());
+    audit.set_compression_headers(&HeaderMap::new(), Some(upstream.headers()));
+    audit.set_response_headers(upstream.headers());
+    let headers = filtered_response_headers(upstream.headers());
+    let bytes = upstream.into_bytes().await?;
+    audit.set_response_size(bytes.len() as i64);
+    audit.set_response_body(&bytes, false);
+    let charge = if status.is_success() {
+        let response = serde_json::from_slice::<Value>(&bytes).map_err(|_| {
+            AppError::upstream(
+                502,
+                "Transcription failed: the DeepSeek response body was not JSON.",
+            )
+        })?;
+        asr::transcript(&response)?;
+        Charge::Fixed(pricing::asr_cost_usd_nanos(asr::duration_ms(&response)?))
+    } else {
+        Charge::Fixed(0)
+    };
+    let error = error_from(status, &bytes);
+    let audit_id = audit.finish(status, charge, error.as_deref());
+    drop(lease);
+    let mut response = build_response(status, headers, Body::from(bytes))?;
+    if let Some(id) = audit_id {
+        response.extensions_mut().insert(id);
+    }
+    Ok(response)
+}
+
 /// `/api/web-search`: the console runs the same search the data plane runs, so
 /// operators can verify the wiring without a Consumer credential.
 pub async fn handle_console_web_search(
@@ -595,6 +768,10 @@ pub(crate) const REQUEST_QUERY_BODY_LIMIT: usize = 256 * 1024;
 /// Request body cap for one web search; a query plus its bounds is tiny, and a
 /// search turn is charged for, so the cap stays far below an inference body.
 pub(crate) const WEB_SEARCH_BODY_LIMIT: usize = 64 * 1024;
+
+/// Request body cap for one transcription: DeepSeek's 8 MiB of audio plus the
+/// multipart framing around it.
+pub(crate) const TRANSCRIPTION_BODY_LIMIT: usize = asr::MAX_AUDIO_BYTES + 1024 * 1024;
 
 /// Column set shared by both query shapes; the response field names are fixed
 /// by [`request_record_json`].
@@ -799,6 +976,7 @@ async fn dispatch(
             Endpoint::ChatCompletions | Endpoint::Responses => {
                 relay_response(&state, context, lease, upstream, &mut audit).await
             }
+            Endpoint::Transcription => unreachable!("audio is dispatched by its own handler"),
         }
     }
     .await;
@@ -816,6 +994,13 @@ fn prepare_request(
     }
     if endpoint == Endpoint::WebSearch {
         return prepare_web_search_request(&value);
+    }
+    // INVARIANT: audio never reaches the JSON path; it enters through
+    // `/v1/audio/transcriptions`, which reads multipart instead.
+    if endpoint == Endpoint::Transcription {
+        return Err(AppError::bad_request(
+            "audio must be uploaded as multipart/form-data",
+        ));
     }
     let model = value
         .get("model")
@@ -837,6 +1022,7 @@ fn prepare_request(
         body: serde_json::to_vec(&value)?.into(),
         model: Some(model),
         stream,
+        content_type: "application/json".to_owned(),
     })
 }
 
@@ -850,6 +1036,7 @@ fn prepare_web_search_request(value: &Value) -> Result<ProxyRequest, AppError> {
         body: serde_json::to_vec(&web_search::request_body(&search))?.into(),
         model: None,
         stream: false,
+        content_type: "application/json".to_owned(),
     })
 }
 
@@ -938,6 +1125,7 @@ async fn dispatch_to_provider(
         endpoint,
         headers,
         request.body.clone().into(),
+        &request.content_type,
         audit,
     )
     .await?;
@@ -963,6 +1151,7 @@ async fn dispatch_to_provider(
         endpoint,
         headers,
         request.body.clone().into(),
+        &request.content_type,
         audit,
     )
     .await?;
@@ -1033,6 +1222,7 @@ async fn send_upstream(
     endpoint: Endpoint,
     inbound: &HeaderMap,
     body: reqwest::Body,
+    content_type: &str,
     audit: &mut AuditTracker,
 ) -> Result<reqwest::Response, AppError> {
     let mut request = state.client.post(format!(
@@ -1048,7 +1238,7 @@ async fn send_upstream(
     audit.set_upstream_accept_encoding(inbound);
     request = request
         .header(header::AUTHORIZATION, format!("Bearer {}", lease.api_key))
-        .header(header::CONTENT_TYPE, "application/json");
+        .header(header::CONTENT_TYPE, content_type);
     let request = request.body(body).build()?;
     audit.set_upstream_request_headers(request.headers());
     Ok(state.client.execute(request).await?)
@@ -1643,6 +1833,14 @@ mod tests {
         if uri.path() == "/v1/tools/search" {
             return Json(search_response(&body)).into_response();
         }
+        if uri.path() == "/v1/tools/asr" {
+            return Json(json!({
+                "request_id": "asr-1",
+                "text": "上海今天天气怎么样？",
+                "duration_ms": 3_200,
+            }))
+            .into_response();
+        }
         let payload = serde_json::from_slice::<Value>(&body).unwrap_or(Value::Null);
         let stream = payload
             .get("stream")
@@ -1737,6 +1935,7 @@ mod tests {
         let app = Router::new()
             .route("/chat/completions", post(mock_upstream))
             .route("/v1/tools/search", post(mock_upstream))
+            .route("/v1/tools/asr", post(mock_upstream))
             .route("/responses", post(mock_upstream))
             .route("/user/balance", get(mock_upstream))
             .with_state(mock);
@@ -1981,6 +2180,237 @@ mod tests {
             pricing::SEARCH_CALL_USD_NANOS,
             "the default multiplier charges the list price"
         );
+    }
+
+    /// A multipart transcription body: one audio part and a model, exactly what
+    /// a downstream gateway posts.
+    fn transcription_request(
+        path: &str,
+        audio: &[u8],
+        file_name: &str,
+        boundary: &str,
+    ) -> Request<Body> {
+        let mut body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{file_name}\"\r\nContent-Type: audio/wav\r\n\r\n"
+        )
+        .into_bytes();
+        body.extend_from_slice(audio);
+        body.extend_from_slice(
+            format!(
+                "\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ndeepseek-asr\r\n--{boundary}--\r\n"
+            )
+            .as_bytes(),
+        );
+        let mut request = Request::builder()
+            .method("POST")
+            .uri(path)
+            .header(header::AUTHORIZATION, format!("Bearer {CONSUMER_SECRET}"))
+            .header(
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .unwrap();
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+                [127, 0, 0, 1],
+                40_001,
+            ))));
+        request
+    }
+
+    /// Two seconds of 16 kHz mono 16-bit PCM silence.
+    fn wav_audio(seconds: u32) -> Vec<u8> {
+        let sample_rate = 16_000u32;
+        let block_align = 2u16;
+        let byte_rate = sample_rate * u32::from(block_align);
+        let data_bytes = byte_rate * seconds;
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&(36 + data_bytes).to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&sample_rate.to_le_bytes());
+        bytes.extend_from_slice(&byte_rate.to_le_bytes());
+        bytes.extend_from_slice(&block_align.to_le_bytes());
+        bytes.extend_from_slice(&16u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&data_bytes.to_le_bytes());
+        bytes.resize(bytes.len() + data_bytes as usize, 0);
+        bytes
+    }
+
+    #[tokio::test]
+    async fn transcription_forwards_one_file_part_and_bills_the_audio_duration() {
+        let (upstream, records) = spawn_mock().await;
+        let state = crate::test_state(&upstream).await;
+        seed_consumer(&state, payments::USD_NANOS).await;
+        seed_provider(&state, "provider-1", "sk-provider-ok").await;
+        // The archive is where a diagnostics-enabled consumer's request would go.
+        sqlx::query("UPDATE consumers SET request_archive=1 WHERE id='consumer'")
+            .execute(&state.db)
+            .await
+            .unwrap();
+        let audio = wav_audio(2);
+
+        let response = crate::router(state.clone())
+            .oneshot(transcription_request(
+                "/v1/audio/transcriptions",
+                &audio,
+                "clip.wav",
+                "lb-boundary",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let request_id = response
+            .headers()
+            .get("x-deepseek-lb-request-id")
+            .expect("a transcription response carries the cost-query key")
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let body: Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(body["text"], "上海今天天气怎么样？");
+        assert_eq!(body["duration_ms"], 3_200);
+
+        let recorded = records.lock().unwrap().clone();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].path, "/v1/tools/asr");
+        let content_type = recorded[0]
+            .headers
+            .get(header::CONTENT_TYPE)
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(
+            content_type.starts_with("multipart/form-data; boundary=deepseek-lb-"),
+            "the rebuilt upload carries this service's own boundary: {content_type}"
+        );
+        let forwarded = String::from_utf8_lossy(&recorded[0].body).to_string();
+        assert!(
+            forwarded.contains("name=\"file\"; filename=\"audio.wav\""),
+            "the part is rebuilt under a fixed name: {forwarded}"
+        );
+        assert!(
+            !forwarded.contains("deepseek-asr"),
+            "the caller's model field never reaches an endpoint that takes no model"
+        );
+        assert!(
+            recorded[0]
+                .body
+                .windows(audio.len())
+                .any(|window| window == audio.as_slice()),
+            "the audio is forwarded byte for byte"
+        );
+
+        let audits = wait_for_audits(&state, 1).await;
+        let audit = &audits[0];
+        assert_eq!(audit.get::<String, _>("path"), "/v1/audio/transcriptions");
+        assert_eq!(audit.get::<String, _>("model"), "deepseek-asr");
+        assert_eq!(audit.get::<String, _>("provider_id"), "provider-1");
+        assert_eq!(audit.get::<i64, _>("status"), 200);
+        assert_eq!(
+            audit.get::<i64, _>("official_cost_usd_nanos"),
+            pricing::asr_cost_usd_nanos(3_200),
+            "3.2 s of audio is billed as four whole seconds"
+        );
+        assert_eq!(
+            audit.get::<i64, _>("actual_cost_usd_nanos"),
+            pricing::asr_cost_usd_nanos(3_200)
+        );
+
+        // The archive keeps the shape of the upload, never the voice. It lands in
+        // a second statement after the base audit row, so it is polled for.
+        let mut archived: Option<Vec<u8>> = None;
+        for _ in 0..200 {
+            archived = sqlx::query_scalar(
+                "SELECT a.request_body FROM request_archives a JOIN api_calls c ON c.id=a.api_call_id WHERE c.request_id=?",
+            )
+            .bind(&request_id)
+            .fetch_optional(&state.db)
+            .await
+            .unwrap();
+            if archived.is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let archived = archived.expect("the transcription request is archived");
+        let archived = String::from_utf8_lossy(&archived).to_string();
+        assert!(archived.contains("\"container\":\"wav\""), "{archived}");
+        assert!(archived.contains("\"audio_bytes\""), "{archived}");
+        assert!(
+            !archived.contains("RIFF"),
+            "the audio itself is not archived"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_bare_transcription_alias_serves_the_same_route() {
+        let (upstream, records) = spawn_mock().await;
+        let state = crate::test_state(&upstream).await;
+        seed_consumer(&state, payments::USD_NANOS).await;
+        seed_provider(&state, "provider-1", "sk-provider-ok").await;
+
+        let response = crate::router(state.clone())
+            .oneshot(transcription_request(
+                "/audio/transcriptions",
+                &wav_audio(1),
+                "clip.wav",
+                "b-alias",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(records.lock().unwrap()[0].path, "/v1/tools/asr");
+        let audits = wait_for_audits(&state, 1).await;
+        assert_eq!(
+            audits[0].get::<String, _>("path"),
+            "/v1/audio/transcriptions"
+        );
+    }
+
+    #[tokio::test]
+    async fn transcription_refuses_a_container_deepseek_cannot_read_without_calling_it() {
+        let (upstream, records) = spawn_mock().await;
+        let state = crate::test_state(&upstream).await;
+        seed_consumer(&state, payments::USD_NANOS).await;
+        seed_provider(&state, "provider-1", "sk-provider-ok").await;
+
+        // A browser records `audio/webm;codecs=opus`, which DeepSeek refuses.
+        let response = crate::router(state.clone())
+            .oneshot(transcription_request(
+                "/v1/audio/transcriptions",
+                b"\x1aE\xdf\xa3 webm/opus bytes",
+                "clip.webm",
+                "b-webm",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body: Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("16-bit PCM WAV or Ogg Opus"),
+            "the caller learns the accepted formats: {body}"
+        );
+        assert!(
+            records.lock().unwrap().is_empty(),
+            "an unreadable container never reaches the upstream"
+        );
+        let audits = wait_for_audits(&state, 1).await;
+        assert_eq!(audits[0].get::<i64, _>("status"), 400);
+        assert_eq!(audits[0].get::<i64, _>("official_cost_usd_nanos"), 0);
     }
 
     #[tokio::test]

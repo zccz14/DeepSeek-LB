@@ -76,7 +76,8 @@ pub async fn model_prices(State(state): State<AppState>) -> Json<Value> {
         "source_url": "https://api-docs.deepseek.com/quick_start/pricing",
         "source_as_of": "2026-09-20",
         "unit": "USD per 1M tokens",
-        "rows": pricing::official_model_prices(&config.available_model_ids)
+        "rows": pricing::official_model_prices(&config.available_model_ids),
+        "asr": pricing::official_asr_price()
     }))
 }
 
