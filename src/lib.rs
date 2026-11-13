@@ -15,6 +15,7 @@ pub mod payments;
 pub mod pricing;
 pub mod proxy;
 pub mod resources;
+pub mod transcode;
 pub mod web_search;
 
 use std::{sync::Arc, time::Duration};
