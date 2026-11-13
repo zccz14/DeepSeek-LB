@@ -92,11 +92,7 @@ pub fn to_wav(bytes: &[u8]) -> Result<Transcode, AppError> {
         None
     };
     let mut mono: Vec<f32> = Vec::new();
-    loop {
-        let packet = match format.next_packet() {
-            Ok(packet) => packet,
-            Err(_) => break,
-        };
+    while let Ok(packet) = format.next_packet() {
         if packet.track_id() != track_id {
             continue;
         }
