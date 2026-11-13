@@ -51,4 +51,10 @@ jobs:
       - name: RustSec audit
         # SQLx records its optional MySQL driver in Cargo.lock. The SQLite-only
         # dependency graph does not contain rsa (`cargo tree -i rsa` is empty).
-        run: cargo audit --ignore RUSTSEC-2023-0071
+        #
+        # RUSTSEC-2026-0459 is the bundled SQLite C library: sqlx 0.8 and 0.9 both
+        # pin libsqlite3-sys 0.30, and sqlx 0.9 needs a newer rustc than this
+        # project builds with, so the fix is blocked upstream rather than here.
+        # Track it until sqlx ships libsqlite3-sys 0.39; the advisory needs a
+        # hostile SQL script against our own database to matter.
+        run: cargo audit --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2026-0459
