@@ -2,6 +2,7 @@
 #![recursion_limit = "256"]
 
 pub mod api;
+pub mod asr;
 pub mod audit;
 pub mod auth;
 pub mod balancer;
@@ -196,6 +197,16 @@ pub fn router(state: AppState) -> Router {
                 .layer(RequestBodyLimitLayer::new(proxy::WEB_SEARCH_BODY_LIMIT)),
         )
         .route(
+            "/v1/audio/transcriptions",
+            post(proxy::handle_transcription)
+                .layer(RequestBodyLimitLayer::new(proxy::TRANSCRIPTION_BODY_LIMIT)),
+        )
+        .route(
+            "/audio/transcriptions",
+            post(proxy::handle_transcription)
+                .layer(RequestBodyLimitLayer::new(proxy::TRANSCRIPTION_BODY_LIMIT)),
+        )
+        .route(
             "/v1/requests/query",
             post(proxy::handle_requests_query)
                 .layer(RequestBodyLimitLayer::new(proxy::REQUEST_QUERY_BODY_LIMIT)),
@@ -369,6 +380,14 @@ impl AppError {
     pub fn bad_request_with_reason(message: impl Into<String>, reason: &'static str) -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
+            message: message.into(),
+            reason: Some(reason),
+            audit_transport: None,
+        }
+    }
+    pub fn payload_too_large(message: impl Into<String>, reason: &'static str) -> Self {
+        Self {
+            status: StatusCode::PAYLOAD_TOO_LARGE,
             message: message.into(),
             reason: Some(reason),
             audit_transport: None,

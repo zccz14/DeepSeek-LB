@@ -521,11 +521,18 @@ type ModelPrice = {
   peak: ModelPriceRates
   off_peak: ModelPriceRates
 }
+type AsrPrice = {
+  model: string
+  list_usd_nanos_per_second: number
+  discounted_usd_nanos_per_second: number
+  discount_active: boolean
+}
 type ModelPricesResponse = {
   source_url: string
   source_as_of: string
   unit: string
   rows: ModelPrice[]
+  asr: AsrPrice
 }
 const copy = {
   zh: {
@@ -681,6 +688,14 @@ const copy = {
     officialModelPriceTable: "Token 价格",
     modelPricesTableDescription:
       "按高峰（peak）与非高峰（off-peak）分别列示。非高峰为高峰价格的 50%，中国法定节假日全天按非高峰计费。",
+    asrPriceTitle: "语音识别价格",
+    asrPriceDescription:
+      "语音识别按音频时长计费，与 Token 无关；下方为按一小时音频折算的收费标准。",
+    asrModel: "接口模型",
+    asrListRate: "计费单价（每小时音频）",
+    asrDiscountedRate: "DeepSeek 现价（限时 5 折）",
+    asrBillingNote:
+      "按音频时长计费，精确到秒，不足 1 秒按 1 秒计；单次最长 120 秒、最大 8 MiB，转写失败不计费。仅接收 16 位 PCM WAV 或 Ogg Opus；不支持流式识别、语种与提示词参数。",
     activeProviders: "可用上游提供商",
     peakCalls24h: "峰时请求（24 小时）",
     pricingTariffTitle: "当前计费时段",
@@ -1224,6 +1239,14 @@ const copy = {
     officialModelPriceTable: "Token pricing",
     modelPricesTableDescription:
       "Peak and off-peak rates are shown separately. Off-peak costs 50% of peak, and Chinese public holidays are billed off-peak all day.",
+    asrPriceTitle: "Speech-to-text pricing",
+    asrPriceDescription:
+      "Speech-to-text bills by audio duration rather than by token; the rates below are converted to one hour of audio.",
+    asrModel: "Endpoint model",
+    asrListRate: "Charged rate (per hour of audio)",
+    asrDiscountedRate: "DeepSeek's current price (50% off)",
+    asrBillingNote:
+      "Billed by audio duration to the second, a fraction counting as a full second; one call covers at most 120 s and 8 MiB, and a failed transcription costs nothing. Only 16-bit PCM WAV or Ogg Opus is accepted, with no streaming, language or prompt parameter.",
     activeProviders: "Active providers",
     peakCalls24h: "Peak-hour requests (24h)",
     pricingTariffTitle: "Current billing window",
@@ -3718,6 +3741,7 @@ function ModelPricesPage({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
   const missingRate = "—"
   const rate = (value: number | undefined) =>
     typeof value === "number" ? formatUsd(value, locale) : missingRate
+  const asr = query.data.asr
   return (
     <div className="flex min-w-0 flex-col gap-4">
       <Card>
@@ -3810,6 +3834,34 @@ function ModelPricesPage({ sdk, locale }: { sdk: AuthSdk; locale: Locale }) {
               </TableBody>
             </Table>
           </DataTable>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>{t.asrPriceTitle}</CardTitle>
+          <CardDescription>{t.asrPriceDescription}</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <dl className="grid gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-2 lg:grid-cols-3">
+            {(
+              [
+                [t.asrModel, asr.model],
+                [t.asrListRate, formatUsdPerHour(asr.list_usd_nanos_per_second, locale)],
+                [
+                  t.asrDiscountedRate,
+                  formatUsdPerHour(asr.discounted_usd_nanos_per_second, locale),
+                ],
+              ] as const
+            ).map(([label, value]) => (
+              <div key={label} className="flex flex-col gap-1 bg-background p-4">
+                <dt>{label}</dt>
+                <dd className="font-semibold tabular-nums">
+                  {value === asr.model ? <code>{value}</code> : value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+          <p className="text-sm text-muted-foreground">{t.asrBillingNote}</p>
         </CardContent>
       </Card>
     </div>
@@ -8372,6 +8424,10 @@ function formatUsd(nanos: number | undefined, locale: Locale) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 9,
   }).format(nanos / 1_000_000_000)
+}
+
+function formatUsdPerHour(nanosPerSecond: number, locale: Locale) {
+  return formatUsd(nanosPerSecond * 3600, locale)
 }
 
 function formatMultiplier(nanos: number, locale: Locale) {
