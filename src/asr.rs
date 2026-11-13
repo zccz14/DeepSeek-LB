@@ -61,12 +61,18 @@ impl Container {
     }
 }
 
-/// One audio upload read out of a downstream transcription request.
+/// One audio upload read out of a downstream transcription request, already in
+/// a shape DeepSeek accepts.
 #[derive(Debug)]
 pub struct AudioUpload {
     pub bytes: Bytes,
-    /// The container the bytes prove, once [`validate`] accepted them.
+    /// The container of `bytes`, after any transcode.
     pub container: Container,
+    /// Duration in milliseconds when the upload itself carries it.
+    pub duration_ms: Option<i64>,
+    /// The source rate and channel count when this upload was transcoded, for
+    /// the audit row; `None` when the audio was forwarded untouched.
+    pub transcoded: Option<(u32, usize)>,
 }
 
 /// Reads the audio out of a `multipart/form-data` transcription body and the
@@ -128,15 +134,15 @@ pub async fn read_upload(
             "audio_too_large",
         ));
     }
-    let container = accepted_container(&bytes)?;
-    Ok((AudioUpload { bytes, container }, model))
+    let upload = prepare_audio(bytes)?;
+    Ok((upload, model))
 }
 
 /// The container `bytes` prove, or the 400 that tells the caller what
 /// DeepSeek does take. A WAV whose header describes anything but 16-bit PCM is
 /// rejected here, because DeepSeek reads the header and refuses it anyway.
-fn accepted_container(bytes: &[u8]) -> Result<Container, AppError> {
-    if let Some(wav) = wav_header(bytes) {
+fn prepare_audio(bytes: Bytes) -> Result<AudioUpload, AppError> {
+    if let Some(wav) = wav_header(&bytes) {
         if wav.audio_format != 1 || wav.bits_per_sample != 16 {
             return Err(AppError::bad_request(format!(
                 "DeepSeek transcribes 16-bit PCM WAV only; this file is {}-bit {}",
@@ -148,22 +154,48 @@ fn accepted_container(bytes: &[u8]) -> Result<Container, AppError> {
                 }
             )));
         }
-        if let Some(duration_ms) = wav.duration_ms
-            && duration_ms > MAX_AUDIO_MS
-        {
-            return Err(AppError::bad_request(format!(
-                "the recording is {} ms of audio; DeepSeek transcribes at most {MAX_AUDIO_MS} ms per request",
-                duration_ms
-            )));
-        }
-        return Ok(Container::Wav);
+        check_duration(wav.duration_ms)?;
+        return Ok(AudioUpload {
+            bytes,
+            container: Container::Wav,
+            duration_ms: wav.duration_ms,
+            transcoded: None,
+        });
     }
-    if is_ogg_opus(bytes) {
-        return Ok(Container::OggOpus);
+    if is_ogg_opus(&bytes) {
+        return Ok(AudioUpload {
+            bytes,
+            container: Container::OggOpus,
+            duration_ms: None,
+            transcoded: None,
+        });
     }
-    Err(AppError::bad_request(
-        "DeepSeek transcribes 16-bit PCM WAV or Ogg Opus audio; this file is neither",
-    ))
+    let transcoded = crate::transcode::to_wav(&bytes)?;
+    check_duration(Some(transcoded.duration_ms))?;
+    if transcoded.wav.len() > MAX_AUDIO_BYTES {
+        return Err(AppError::payload_too_large(
+            format!(
+                "the recording is {} ms of audio, which does not fit in {MAX_AUDIO_BYTES} bytes once converted",
+                transcoded.duration_ms
+            ),
+            "audio_too_large",
+        ));
+    }
+    Ok(AudioUpload {
+        bytes: transcoded.wav.into(),
+        container: Container::Wav,
+        duration_ms: Some(transcoded.duration_ms),
+        transcoded: Some((transcoded.source_rate, transcoded.source_channels)),
+    })
+}
+
+fn check_duration(duration_ms: Option<i64>) -> Result<(), AppError> {
+    match duration_ms {
+        Some(duration_ms) if duration_ms > MAX_AUDIO_MS => Err(AppError::bad_request(format!(
+            "the recording is {duration_ms} ms of audio; DeepSeek transcribes at most {MAX_AUDIO_MS} ms per request"
+        ))),
+        _ => Ok(()),
+    }
 }
 
 /// The upstream `multipart/form-data` body: one `file` part and nothing else.
@@ -369,28 +401,32 @@ mod tests {
     }
 
     #[test]
-    fn validation_accepts_sixteen_bit_pcm_wav_and_ogg_opus() {
-        let mut opus = b"OggS\0\x02\0\0\0\0\0\0\0\0".to_vec();
+    fn a_sixteen_bit_pcm_wav_and_an_ogg_opus_upload_are_forwarded_as_they_are() {
+        let mut opus = b"OggS\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00".to_vec();
         opus.extend_from_slice(&[0u8; 32]);
         opus.extend_from_slice(b"\x13OpusHead\x01\x02");
-        assert_eq!(
-            accepted_container(&wav(1, 1, 16)).ok(),
-            Some(Container::Wav)
-        );
-        assert_eq!(accepted_container(&opus).ok(), Some(Container::OggOpus));
+        let wav_upload = prepare_audio(Bytes::from(wav(1, 1, 16))).expect("a WAV is taken as is");
+        assert_eq!(wav_upload.container, Container::Wav);
+        assert_eq!(wav_upload.duration_ms, Some(1_000));
+        assert_eq!(wav_upload.transcoded, None);
+        let opus_upload = prepare_audio(Bytes::from(opus)).expect("an Ogg Opus is taken as is");
+        assert_eq!(opus_upload.container, Container::OggOpus);
     }
 
     #[test]
-    fn validation_names_the_accepted_formats_and_the_limits() {
-        let error = accepted_container(b"\x1aE\xdf\xa3 webm bytes").expect_err("webm is refused");
+    fn a_wav_deepseek_would_refuse_is_named_precisely() {
+        let error = prepare_audio(Bytes::from(wav(1, 1, 8))).expect_err("8-bit PCM is refused");
+        assert!(error.message().contains("8-bit PCM"));
+        let error = prepare_audio(Bytes::from(wav(121, 1, 16))).expect_err("121 s is too long");
+        assert!(error.message().contains("120000 ms"));
+    }
+
+    #[test]
+    fn an_unreadable_upload_is_refused_with_the_formats_this_service_converts() {
+        let error = prepare_audio(Bytes::from_static(b"not audio at all")).expect_err("refused");
         assert_eq!(error.status(), axum::http::StatusCode::BAD_REQUEST);
         assert!(error.message().contains("16-bit PCM WAV or Ogg Opus"));
-
-        let error = accepted_container(&wav(1, 1, 8)).expect_err("8-bit PCM is refused");
-        assert!(error.message().contains("8-bit PCM"));
-
-        let error = accepted_container(&wav(121, 1, 16)).expect_err("121 s is too long");
-        assert!(error.message().contains("120000 ms"));
+        assert!(error.message().contains("WebM/Opus"));
     }
 
     #[tokio::test]
@@ -436,6 +472,8 @@ mod tests {
         let upload = AudioUpload {
             bytes: Bytes::from_static(b"wav-bytes"),
             container: Container::Wav,
+            duration_ms: Some(2_000),
+            transcoded: None,
         };
         let body = String::from_utf8(upstream_body(&upload, "boundary-x")).expect("utf-8 body");
         assert_eq!(

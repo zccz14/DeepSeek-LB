@@ -104,7 +104,7 @@ curl https://deepseek.ntnl.io/v1/audio/transcriptions \
 
 `/v1/audio/transcriptions` 采用 OpenAI 的语音转写形状：音频放在 `multipart/form-data` 的 `file` 字段里，`model` 只用于标识与审计（DeepSeek 的语音识别只有一个固定模型，请求里不带模型字段）。服务把上传重建成只含 `file` 一个部件的请求，发往 `{upstream_base}/v1/tools/asr`；`language`、`prompt`、`response_format` 等其余字段不转发，因为 DeepSeek 不接受这些参数（语种自动识别）。响应原样透传 DeepSeek 的 JSON（`request_id`、`text`、`duration_ms`）。
 
-DeepSeek 只接收 16 位 PCM WAV 或 Ogg Opus、单次最大 8 MiB、最长 120 秒，且不支持流式识别。服务在发往上游之前就按内容判断容器与时长，不符合时直接返回 400 并说明可接受的格式与上限；转写失败的调用不计费。计费使用 DeepSeek 官方刊例价（每小时音频 0.116 美元，即每秒 `pricing::ASR_USD_NANOS_PER_SECOND`），按音频时长精确到秒、不足 1 秒按 1 秒计，再乘以价格倍率成为对该 Consumer 的实收金额。DeepSeek 目前按刊例价 5 折结算（每小时 0.058 美元），价目表仍按刊例价核算，控制台的“模型价格”页同时列出两者。
+DeepSeek 只接收 16 位 PCM WAV 或 Ogg Opus、单次最大 8 MiB、最长 120 秒，且不支持流式识别。所以本服务在中间做一次格式归一：**16 位 PCM WAV 与 Ogg Opus 原样转发**（不重新编码、不损失音质），其余容器（浏览器的 WebM/Opus、iPhone 的 MP4/AAC、MP3、FLAC、Vorbis、非 16 位 PCM 的 WAV）在服务内解码后重编成**单声道 16 kHz 16 位 PCM WAV** 再发往上游——这也是 DeepSeek 可接受集合里最小的一种，120 秒约 3.8 MB，天然落在 8 MiB 之内。解码全部是纯 Rust（`symphonia` + `opus-decoder`），主机上不需要 ffmpeg，交付仍是单二进制。时长在上游之前就能算出，超长直接返回 400 并说明上限；完全无法解码的上传返回 400 并列出可转换的格式；转写失败的调用不计费。计费使用 DeepSeek 官方刊例价（每小时音频 0.116 美元，即每秒 `pricing::ASR_USD_NANOS_PER_SECOND`），按音频时长精确到秒、不足 1 秒按 1 秒计，再乘以价格倍率成为对该 Consumer 的实收金额。DeepSeek 目前按刊例价 5 折结算（每小时 0.058 美元），价目表仍按刊例价核算，控制台的“模型价格”页同时列出两者。
 
 ### 请求费用查询
 
