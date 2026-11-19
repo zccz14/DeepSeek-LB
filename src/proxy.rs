@@ -13,7 +13,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use futures_util::StreamExt;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use sqlx::{QueryBuilder, Row, Sqlite};
 use tokio::sync::OwnedSemaphorePermit;
 use uuid::Uuid;
@@ -48,6 +48,9 @@ const HOP_HEADERS: &[&str] = &[
 const PROXY_ONLY_HEADERS: &[&str] = &["x-lb-affinity-key"];
 
 struct CallContext {
+    /// Which endpoint the call was bound for: only `/v1/responses` replies
+    /// carry the real amount this call cost.
+    endpoint: Endpoint,
     model: Option<String>,
     stream: bool,
 }
@@ -378,6 +381,14 @@ impl AuditTracker {
         usage_from_value(&value)
     }
 
+    /// The amount the audit row of this request books for `usage`, computed
+    /// from the same snapshot and formula [`settle`] uses. `None` once the
+    /// event is gone: a dropped audit row settles nothing.
+    fn actual_cost_usd_nanos(&self, model: Option<&str>, usage: Usage) -> Option<i64> {
+        let event = self.event.as_ref()?;
+        Some(turn_costs(event, model.or(event.model.as_deref()), usage).1)
+    }
+
     fn set_error_response(&mut self, error: &AppError) {
         let body = serde_json::to_vec(&json!({"error":{
             "message":error.message(),
@@ -479,26 +490,39 @@ fn settle(
     event.status = status;
     event.latency_ms = started.elapsed().as_millis().max(1) as i64;
     event.peak = pricing::is_peak(event.created_at);
-    let official_cost_usd_nanos = match charge {
+    let (official_cost_usd_nanos, actual_cost_usd_nanos) = match charge {
         Charge::Tokens { model, usage } => {
             event.model = model.or_else(|| event.model.take());
             event.input_tokens = usage.input_tokens;
             event.output_tokens = usage.output_tokens;
             event.cached_tokens = usage.cached_tokens;
-            event
-                .model
-                .as_deref()
-                .and_then(|model| pricing::official_cost_usd_nanos(model, usage, event.peak))
-                .unwrap_or_default()
+            turn_costs(event, event.model.as_deref(), usage)
         }
-        Charge::Fixed(nanos) => nanos,
+        Charge::Fixed(nanos) => (
+            nanos,
+            pricing::apply_price_multiplier(nanos, event.price_multiplier_nanos),
+        ),
     };
     event.official_cost_usd_nanos = official_cost_usd_nanos;
-    event.actual_cost_usd_nanos =
-        pricing::apply_price_multiplier(official_cost_usd_nanos, event.price_multiplier_nanos);
+    event.actual_cost_usd_nanos = actual_cost_usd_nanos;
     if event.error.is_none() {
         event.error = error.map(str::to_owned);
     }
+}
+
+/// The official and actually charged cost of one model turn, from the request's
+/// own price snapshot: the tariff of its start time and the multiplier it began
+/// with. Every amount this service books or reports is derived here, so a reply
+/// that states its cost and the audit row it settles to can never disagree.
+fn turn_costs(event: &AuditEvent, model: Option<&str>, usage: Usage) -> (i64, i64) {
+    let peak = pricing::is_peak(event.created_at);
+    let official = model
+        .and_then(|model| pricing::official_cost_usd_nanos(model, usage, peak))
+        .unwrap_or_default();
+    (
+        official,
+        pricing::apply_price_multiplier(official, event.price_multiplier_nanos),
+    )
 }
 
 pub async fn handle_json(
@@ -966,6 +990,7 @@ async fn dispatch(
         )
         .await?;
         let context = CallContext {
+            endpoint,
             model: request.model.clone(),
             stream: request.stream,
         };
@@ -1316,14 +1341,26 @@ async fn relay_response(
     let is_stream =
         context.stream && status.is_success() && matches!(&upstream, UpstreamResponse::Live(_));
     if !is_stream {
-        let bytes = upstream.into_bytes().await?;
-        audit.set_response_size(bytes.len() as i64);
-        audit.set_response_body(&bytes, false);
+        let mut bytes = upstream.into_bytes().await?;
         let usage = if is_sse {
             audit.inspect_sse_body(&bytes)
         } else {
             audit.inspect_json_body(&bytes)
         };
+        // A `/v1/responses` reply states what the call really cost, inside the
+        // same `usage` object that reports the tokens. The amount is the one
+        // the audit row below books, so the reply and the queryable record
+        // always agree; a body with no `usage` is relayed unchanged.
+        if context.endpoint == Endpoint::Responses
+            && status.is_success()
+            && !is_sse
+            && let Some(cost) = audit.actual_cost_usd_nanos(context.model.as_deref(), usage)
+            && let Some(rewritten) = inject_cost_into_body(&bytes, cost)
+        {
+            bytes = rewritten;
+        }
+        audit.set_response_size(bytes.len() as i64);
+        audit.set_response_body(&bytes, false);
         let audit_id = audit.finish(
             status,
             Charge::Tokens {
@@ -1354,14 +1391,53 @@ async fn relay_response(
         unreachable!("only successful live upstream responses stream")
     };
     let mut stream = upstream.bytes_stream();
+    // A Responses stream ends with `response.completed`, the event carrying the
+    // usage — and so the place the amount belongs. Every earlier event, and
+    // every other endpoint, is relayed byte for byte as it arrives.
+    let injects_cost = context.endpoint == Endpoint::Responses;
     let output = async_stream::stream! {
         let mut completion = completion;
         let mut stream_failed = false;
+        let mut pending: Vec<u8> = Vec::new();
+        let mut injecting = injects_cost;
         while let Some(item) = stream.next().await {
             match item {
                 Ok(bytes) => {
                     completion.capture_sse(&bytes);
-                    yield Ok::<Bytes, Infallible>(bytes);
+                    if !injecting {
+                        yield Ok::<Bytes, Infallible>(bytes);
+                        continue;
+                    }
+                    pending.extend_from_slice(&bytes);
+                    if pending.len() > SSE_EVENT_LIMIT {
+                        // An upstream that never closes an event is relayed as
+                        // it comes rather than buffered without bound.
+                        injecting = false;
+                        yield Ok::<Bytes, Infallible>(Bytes::from(std::mem::take(&mut pending)));
+                        continue;
+                    }
+                    while let Some(end) = sse_event_end(&pending) {
+                        let block = pending.drain(..end).collect::<Vec<u8>>();
+                        let Some(event) = looks_completed(&block)
+                            .then(|| parse_sse_event(&block))
+                            .flatten()
+                            .filter(ParsedSseEvent::is_completed)
+                        else {
+                            yield Ok::<Bytes, Infallible>(Bytes::from(block));
+                            continue;
+                        };
+                        // The amount prices exactly what the audit row books:
+                        // everything this stream reported, terminal event included.
+                        let rewritten = completion
+                            .cost_usd_nanos()
+                            .and_then(|cost| rewrite_completed_event(&block, event, cost));
+                        injecting = false;
+                        yield Ok::<Bytes, Infallible>(Bytes::from(rewritten.unwrap_or(block)));
+                        if !pending.is_empty() {
+                            yield Ok::<Bytes, Infallible>(Bytes::from(std::mem::take(&mut pending)));
+                        }
+                        break;
+                    }
                 }
                 Err(error) => {
                     tracing::warn!(%error, "upstream stream ended with error");
@@ -1369,6 +1445,9 @@ async fn relay_response(
                     break;
                 }
             }
+        }
+        if !pending.is_empty() {
+            yield Ok::<Bytes, Infallible>(Bytes::from(std::mem::take(&mut pending)));
         }
         completion.finish(stream_failed);
         drop(lease);
@@ -1469,6 +1548,14 @@ impl StreamCompletion {
         }
     }
 
+    /// The amount the audit row books for everything this stream reported,
+    /// computed from the same snapshot and formula [`settle`] uses. `None` when
+    /// the row was dropped and nothing will be booked.
+    fn cost_usd_nanos(&self) -> Option<i64> {
+        let event = self.event.as_ref()?;
+        Some(turn_costs(event, event.model.as_deref(), self.sse.usage).1)
+    }
+
     fn capture_sse(&mut self, bytes: &[u8]) {
         let Some(request_archive) = self.event.as_ref().map(|event| event.request_archive) else {
             return;
@@ -1548,6 +1635,140 @@ fn build_response(
     response
         .body(body)
         .map_err(|_| AppError::internal("failed to build response"))
+}
+
+/// The `usage` object of one response body: at the top level of a complete
+/// reply, under `response` inside the terminal event of a stream.
+fn usage_object_mut(value: &mut Value) -> Option<&mut Map<String, Value>> {
+    if value.get("usage").is_some_and(Value::is_object) {
+        return value.get_mut("usage").and_then(Value::as_object_mut);
+    }
+    value.get_mut("response")?.get_mut("usage")?.as_object_mut()
+}
+
+/// Writes `cost_usd_nanos` into a complete `/v1/responses` body and returns the
+/// bytes to relay. `None` when the body has no `usage` object to attach it to,
+/// in which case the reply is relayed unchanged.
+fn inject_cost_into_body(body: &[u8], cost_usd_nanos: i64) -> Option<Bytes> {
+    let mut value = serde_json::from_slice::<Value>(body).ok()?;
+    usage_object_mut(&mut value)?.insert("cost_usd_nanos".to_owned(), cost_usd_nanos.into());
+    serde_json::to_vec(&value).ok().map(Bytes::from)
+}
+
+/// The end of the first complete SSE event in `pending`: the byte after the
+/// blank line that terminates it (`\n\n`, or `\r\n\r\n`).
+fn sse_event_end(pending: &[u8]) -> Option<usize> {
+    for index in 0..pending.len().saturating_sub(1) {
+        if pending[index..].starts_with(b"\r\n\r\n") {
+            return Some(index + 4);
+        }
+        if pending[index..].starts_with(b"\n\n") {
+            return Some(index + 2);
+        }
+    }
+    None
+}
+
+/// One SSE event block, split into the pieces a receipt rewrite needs. The
+/// block is parsed only when it looks like the terminal event: every other
+/// event is relayed byte for byte.
+struct ParsedSseEvent {
+    name: Option<String>,
+    data: Option<Value>,
+    /// Byte range of the block's `data:` payload inside the block.
+    data_range: Option<(usize, usize)>,
+    /// How many `data:` lines the block carried.
+    data_lines: usize,
+}
+
+impl ParsedSseEvent {
+    /// Whether this block is the terminal `response.completed` event — the one
+    /// carrying the usage the amount belongs to.
+    fn is_completed(&self) -> bool {
+        self.name.as_deref() == Some("response.completed")
+            || self
+                .data
+                .as_ref()
+                .and_then(|value| value.get("type"))
+                .and_then(Value::as_str)
+                == Some("response.completed")
+    }
+
+    /// Whether the payload can be replaced in place: exactly one `data:` line,
+    /// which is what the OpenAI-shaped upstreams emit.
+    fn is_rewritable(&self) -> bool {
+        self.data_lines == 1 && self.data_range.is_some()
+    }
+}
+
+fn parse_sse_event(block: &[u8]) -> Option<ParsedSseEvent> {
+    let mut name = None;
+    let mut data = String::new();
+    let mut data_lines = 0;
+    let mut data_range = None;
+    let mut cursor = 0;
+    loop {
+        let rest = &block[cursor..];
+        let line_end = rest.iter().position(|byte| *byte == b'\n')?;
+        let line = &rest[..line_end];
+        let next = cursor + line_end + 1;
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if line.is_empty() {
+            break;
+        }
+        if let Some(value) = line.strip_prefix(b"event:") {
+            let value = value.strip_prefix(b" ").unwrap_or(value);
+            name = Some(String::from_utf8_lossy(value).into_owned());
+        } else if let Some(value) = line.strip_prefix(b"data:") {
+            let value = value.strip_prefix(b" ").unwrap_or(value);
+            if data_lines > 0 {
+                data.push('\n');
+            }
+            data.push_str(&String::from_utf8_lossy(value));
+            let start = cursor + line.len() - value.len();
+            match data_range {
+                Some((_, end)) => data_range = Some((start.min(end), cursor + line.len())),
+                None => data_range = Some((start, cursor + line.len())),
+            }
+            data_lines += 1;
+        }
+        cursor = next;
+    }
+    Some(ParsedSseEvent {
+        name,
+        data: serde_json::from_str::<Value>(&data).ok(),
+        data_range,
+        data_lines,
+    })
+}
+
+/// Whether an event block could be the terminal one, checked on the raw bytes
+/// so every other event of the stream costs one search and no parsing.
+fn looks_completed(block: &[u8]) -> bool {
+    block
+        .windows(b"response.completed".len())
+        .any(|window| window == b"response.completed")
+}
+
+/// Rewrites one terminal event with the amount, leaving every other byte of the
+/// block — event name, id, framing — exactly as the upstream wrote it.
+fn rewrite_completed_event(
+    block: &[u8],
+    mut event: ParsedSseEvent,
+    cost_usd_nanos: i64,
+) -> Option<Vec<u8>> {
+    if !event.is_rewritable() {
+        return None;
+    }
+    usage_object_mut(event.data.as_mut()?)?
+        .insert("cost_usd_nanos".to_owned(), cost_usd_nanos.into());
+    let data = serde_json::to_vec(&event.data?).ok()?;
+    let (start, end) = event.data_range?;
+    let mut rewritten = Vec::with_capacity(block.len() + data.len());
+    rewritten.extend_from_slice(&block[..start]);
+    rewritten.extend_from_slice(&data);
+    rewritten.extend_from_slice(&block[end..]);
+    Some(rewritten)
 }
 
 fn usage_from_value(value: &Value) -> Usage {
@@ -1846,7 +2067,28 @@ mod tests {
             .get("stream")
             .and_then(Value::as_bool)
             .unwrap_or_default();
+        let input = payload.get("input").and_then(Value::as_str);
         match uri.path() {
+            "/responses" if stream && input == Some("oversized") => {
+                // A single event larger than the rewrite buffer: it never
+                // closes, so the stream has to be relayed as it arrives.
+                let mut events = String::from(
+                    "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"",
+                );
+                events.push_str(&"x".repeat(SSE_EVENT_LIMIT));
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "text/event-stream")
+                    .body(Body::from(events))
+                    .unwrap()
+            }
+            "/responses" if input == Some("no-usage") => Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{"id":"resp-1","object":"response","model":"deepseek-flash"}"#,
+                ))
+                .unwrap(),
             "/user/balance" => Json(json!({
                 "is_available": true,
                 "balance_infos": [{"currency":"USD","total_balance":"12.34","granted_balance":"0.00","topped_up_balance":"12.34"}]
@@ -2021,6 +2263,10 @@ mod tests {
         assert!(
             std::str::from_utf8(&body).unwrap().contains("pong"),
             "upstream response body is relayed"
+        );
+        assert!(
+            !String::from_utf8_lossy(&body).contains("cost_usd_nanos"),
+            "only /v1/responses replies carry the amount"
         );
 
         let recorded = records.lock().unwrap().clone();
@@ -2553,6 +2799,235 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(consumers, 1);
+    }
+
+    #[tokio::test]
+    async fn responses_reply_carries_the_real_usd_cost_of_the_call() {
+        let (upstream, _) = spawn_mock().await;
+        let state = crate::test_state(&upstream).await;
+        seed_consumer(&state, payments::USD_NANOS).await;
+        seed_provider(&state, "provider-1", "sk-provider-ok").await;
+
+        let response = crate::router(state.clone())
+            .oneshot(proxy_request(
+                "/v1/responses",
+                json!({"model":"deepseek-v4-pro","input":"ping"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+
+        let audits = wait_for_audits(&state, 1).await;
+        let audit = &audits[0];
+        let booked = audit.get::<i64, _>("actual_cost_usd_nanos");
+        assert!(booked > 0, "the call is priced, not free");
+        assert_eq!(
+            body["usage"]["cost_usd_nanos"].as_i64(),
+            Some(booked),
+            "the reply states exactly the amount the audit row books"
+        );
+        assert_eq!(
+            booked,
+            pricing::apply_price_multiplier(
+                pricing::official_cost_usd_nanos(
+                    "deepseek-v4-pro",
+                    Usage {
+                        input_tokens: 7,
+                        output_tokens: 4,
+                        cached_tokens: 2,
+                    },
+                    pricing::is_peak(audit.get::<i64, _>("created_at")),
+                )
+                .unwrap(),
+                payments::USD_NANOS,
+            ),
+            "the amount comes from this request's own price snapshot"
+        );
+        assert_eq!(body["usage"]["input_tokens"], json!(7));
+        assert_eq!(body["usage"]["output_tokens"], json!(4));
+    }
+
+    #[tokio::test]
+    async fn responses_reply_without_usage_is_relayed_unchanged() {
+        let (upstream, _) = spawn_mock().await;
+        let state = crate::test_state(&upstream).await;
+        seed_consumer(&state, payments::USD_NANOS).await;
+        seed_provider(&state, "provider-1", "sk-provider-ok").await;
+
+        let response = crate::router(state.clone())
+            .oneshot(proxy_request(
+                "/v1/responses",
+                json!({"model":"deepseek-flash","input":"no-usage"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(
+            body.as_ref(),
+            br#"{"id":"resp-1","object":"response","model":"deepseek-flash"}"#,
+            "a reply with nowhere to put the amount is relayed byte for byte"
+        );
+    }
+
+    #[tokio::test]
+    async fn responses_stream_carries_the_cost_in_its_terminal_event() {
+        let (upstream, _) = spawn_mock().await;
+        let state = crate::test_state(&upstream).await;
+        seed_consumer(&state, payments::USD_NANOS).await;
+        seed_provider(&state, "provider-1", "sk-provider-ok").await;
+
+        let response = crate::router(state.clone())
+            .oneshot(proxy_request(
+                "/v1/responses",
+                json!({"model":"deepseek-v4-pro","stream":true,"input":"ping"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+
+        let created = "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-1\"}}\n\n";
+        assert!(
+            text.starts_with(created),
+            "events before the terminal one are relayed byte for byte"
+        );
+        let completed = &text[created.len()..];
+        let prefix = "event: response.completed\ndata: ";
+        let data = completed
+            .strip_prefix(prefix)
+            .expect("the event name and its data prefix stay as written")
+            .strip_suffix("\n\n")
+            .expect("the event framing stays as written");
+        let value: Value = serde_json::from_str(data).unwrap();
+        assert_eq!(value["type"], json!("response.completed"));
+        assert_eq!(
+            value["response"]["usage"]["input_tokens"],
+            json!(7),
+            "the upstream usage is kept"
+        );
+
+        let audits = wait_for_audits(&state, 1).await;
+        let booked = audits[0].get::<i64, _>("actual_cost_usd_nanos");
+        assert!(booked > 0, "the call is priced, not free");
+        assert_eq!(
+            value["response"]["usage"]["cost_usd_nanos"].as_i64(),
+            Some(booked),
+            "the terminal event states exactly the amount the audit row books"
+        );
+    }
+
+    #[tokio::test]
+    async fn responses_stream_too_large_to_inspect_is_relayed_untouched() {
+        let (upstream, _) = spawn_mock().await;
+        let state = crate::test_state(&upstream).await;
+        seed_consumer(&state, payments::USD_NANOS).await;
+        seed_provider(&state, "provider-1", "sk-provider-ok").await;
+
+        let response = crate::router(state.clone())
+            .oneshot(proxy_request(
+                "/v1/responses",
+                json!({"model":"deepseek-flash","stream":true,"input":"oversized"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert!(body.len() > SSE_EVENT_LIMIT);
+        assert!(
+            !String::from_utf8_lossy(&body).contains("cost_usd_nanos"),
+            "an event that never closes is relayed instead of buffered"
+        );
+    }
+
+    #[test]
+    fn the_cost_lands_in_the_usage_of_a_complete_reply() {
+        let body = br#"{"id":"resp-1","usage":{"input_tokens":7,"output_tokens":4}}"#;
+        let rewritten = inject_cost_into_body(body, 6_360).unwrap();
+        let value: Value = serde_json::from_slice(&rewritten).unwrap();
+        assert_eq!(value["usage"]["cost_usd_nanos"], json!(6_360));
+        assert_eq!(value["usage"]["input_tokens"], json!(7));
+
+        assert!(
+            inject_cost_into_body(br#"{"id":"resp-1","output":[]}"#, 6_360).is_none(),
+            "a body with nowhere to put the amount is relayed unchanged"
+        );
+        assert!(inject_cost_into_body(b"not json", 6_360).is_none());
+        assert!(
+            inject_cost_into_body(br#"{"usage":7}"#, 6_360).is_none(),
+            "a non-object usage is left alone"
+        );
+    }
+
+    #[test]
+    fn sse_event_end_stops_after_the_blank_line_between_events() {
+        let block = b"event: x\ndata: {}\n\n";
+        assert_eq!(sse_event_end(block), Some(block.len()));
+        let two = b"event: x\ndata: {}\n\nevent: y";
+        assert_eq!(sse_event_end(two), Some(block.len()));
+        let crlf = b"event: x\r\ndata: {}\r\n\r\nnext";
+        assert_eq!(
+            sse_event_end(crlf),
+            Some(b"event: x\r\ndata: {}\r\n\r\n".len())
+        );
+        assert_eq!(
+            sse_event_end(b"event: x\ndata: {}"),
+            None,
+            "an event still arriving has no end"
+        );
+        // A terminator split from its event is completed by the next chunk.
+        let mut pending = b"event: x\ndata: {}\n".to_vec();
+        assert_eq!(sse_event_end(&pending), None);
+        pending.push(b'\n');
+        assert_eq!(sse_event_end(&pending), Some(pending.len()));
+    }
+
+    #[test]
+    fn only_the_terminal_event_is_rewritten_and_every_other_byte_survives() {
+        let block = b"event: response.completed\nid: 7\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-1\",\"usage\":{\"input_tokens\":7,\"output_tokens\":4}}}\n\n";
+        let event = parse_sse_event(block).unwrap();
+        assert!(looks_completed(block));
+        assert!(event.is_completed());
+        assert!(event.is_rewritable());
+        let rewritten = rewrite_completed_event(block, event, 6_360).unwrap();
+
+        let prefix = b"event: response.completed\nid: 7\ndata: ";
+        let suffix = b"\n\n";
+        assert!(
+            rewritten.starts_with(prefix),
+            "the event name and id line stay byte for byte"
+        );
+        assert!(
+            rewritten.ends_with(suffix),
+            "the framing stays byte for byte"
+        );
+        let data = &rewritten[prefix.len()..rewritten.len() - suffix.len()];
+        let value: Value = serde_json::from_slice(data).unwrap();
+        assert_eq!(value["response"]["usage"]["cost_usd_nanos"], json!(6_360));
+        assert_eq!(value["response"]["usage"]["input_tokens"], json!(7));
+        assert_eq!(value["type"], json!("response.completed"));
+
+        let created = b"event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-1\"}}\n\n";
+        assert!(
+            !parse_sse_event(created).unwrap().is_completed(),
+            "every other event is relayed untouched"
+        );
+    }
+
+    #[test]
+    fn a_terminal_event_split_over_several_data_lines_is_relayed_untouched() {
+        let block = b"event: response.completed\ndata: {\"type\":\"response.completed\",\ndata: \"response\":{\"usage\":{}}}\n\n";
+        let event = parse_sse_event(block).unwrap();
+        assert!(event.is_completed());
+        assert!(
+            !event.is_rewritable(),
+            "a payload spread over several data lines is never replaced in place"
+        );
+        assert!(rewrite_completed_event(block, event, 1).is_none());
     }
 
     #[tokio::test]
