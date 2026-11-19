@@ -66,6 +66,8 @@ curl https://deepseek.ntnl.io/v1/responses \
   -d '{"model": "deepseek-v4-pro", "input": "Explain this Rust error"}'
 ```
 
+`/v1/responses` 的应答在返回的 `usage` 对象里带上这次调用的实收金额 `cost_usd_nanos`（USD 纳美元，整数），取值与同一调用的审计行 `actual_cost_usd_nanos`、`GET /v1/requests/{id}` 完全一致（同一份价格快照 × 同一份 usage，不改价格、不改结算）；正文没有 `usage` 时原样返回。流式应答只重写最后一个 `response.completed` 事件的 `data:` 载荷（金额写在 `response.usage.cost_usd_nanos`），事件名、`id:` 与换行等其余字节原样转发，更早的事件与其它端点都不解析、不缓冲；一个迟迟不闭合且超过 8 MiB 的事件退回透传。`/v1/chat/completions` 等其它端点的应答不变。
+
 模型目录：
 
 ```bash
